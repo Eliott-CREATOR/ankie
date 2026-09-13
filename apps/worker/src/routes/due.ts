@@ -82,5 +82,34 @@ export async function handleDue(env: { DB: D1Database }): Promise<Response> {
     .bind(newSlotsLeft)
     .all<CardRow>();
 
-  return Response.json({ cards: [...dueCards.results, ...newCards.results] });
+  const cards = [...dueCards.results, ...newCards.results];
+
+  // nextDueAt powers the home screen's "Nothing due" line — the only place that state is shown
+  // (docs/prompts/c1.md Step 4 addendum). Two independent reasons a queue can be empty, so two
+  // candidate timestamps: the next review-card due date, and — if the daily new-card limit
+  // truncated the new-card pool rather than exhausting it — tomorrow's reset.
+  let nextDueAt: number | null = null;
+  if (cards.length === 0) {
+    const nextReviewRow = await env.DB.prepare(
+      `SELECT MIN(due) AS next_due FROM cards
+       WHERE state IN ('review', 'learning', 'relearning') AND due > ?1`,
+    )
+      .bind(now)
+      .first<{ next_due: number | null }>();
+
+    const totalNewRow = await env.DB.prepare(
+      "SELECT COUNT(*) AS n FROM cards WHERE state = 'new'",
+    ).first<{ n: number }>();
+
+    const candidates: number[] = [];
+    if (nextReviewRow?.next_due != null) {
+      candidates.push(nextReviewRow.next_due);
+    }
+    if ((totalNewRow?.n ?? 0) > newCards.results.length) {
+      candidates.push(todayStart + 24 * 60 * 60 * 1000);
+    }
+    nextDueAt = candidates.length > 0 ? Math.min(...candidates) : null;
+  }
+
+  return Response.json({ cards, nextDueAt });
 }

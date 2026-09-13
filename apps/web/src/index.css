@@ -7,6 +7,7 @@
   --hard: #ff9500;
   --good: #34c759;
   --easy: #007aff;
+  --accent: #007aff;
   color-scheme: light;
 }
 
@@ -21,6 +22,7 @@
     --hard: #ff9f0a;
     --good: #30d158;
     --easy: #0a84ff;
+    --accent: #0a84ff;
     color-scheme: dark;
   }
 }
@@ -52,6 +54,44 @@ body {
   min-height: 100%;
   display: flex;
   flex-direction: column;
+}
+
+.home {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 24px;
+  padding: 24px;
+  padding-bottom: max(24px, env(safe-area-inset-bottom));
+  text-align: center;
+}
+
+.app-title {
+  font-size: 22px;
+  font-weight: 700;
+  margin: 0;
+}
+
+.primary-btn {
+  width: 100%;
+  max-width: 320px;
+  min-height: 44px;
+  border: none;
+  border-radius: 12px;
+  background: var(--accent);
+  color: #ffffff;
+  font-size: 17px;
+  font-weight: 600;
+  font-family: inherit;
+  padding: 10px 20px;
+}
+
+.status-line {
+  font-size: 15px;
+  color: var(--fg-dim);
+  margin: 0;
 }
 
 .progress {
@@ -157,15 +197,4 @@ body {
 }
 .rating-btn--easy {
   background: var(--easy);
-}
-
-.empty-state {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
-  text-align: center;
-  color: var(--fg-dim);
-  font-size: 17px;
 }

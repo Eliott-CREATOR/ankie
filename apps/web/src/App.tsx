@@ -3,6 +3,7 @@ import { type ReactNode, useCallback, useEffect, useRef, useState } from "react"
 
 interface DueResponse {
   cards: CardRow[];
+  nextDueAt: number | null;
 }
 
 interface CardFront {
@@ -39,24 +40,46 @@ function emphasizeWord(sentence: string, word: string): ReactNode {
   );
 }
 
-export function App() {
-  const [queue, setQueue] = useState<CardRow[] | null>(null);
+function formatNextDue(ts: number): string {
+  return new Date(ts).toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" });
+}
+
+function HomeScreen({
+  due,
+  onStartReview,
+}: { due: DueResponse | null; onStartReview: () => void }) {
+  return (
+    <div className="home">
+      <h1 className="app-title">Ankie</h1>
+      {due === null ? (
+        <p className="status-line">Loading…</p>
+      ) : due.cards.length > 0 ? (
+        <button type="button" className="primary-btn" onClick={onStartReview}>
+          Review · {due.cards.length} due
+        </button>
+      ) : (
+        <p className="status-line">
+          Nothing due{due.nextDueAt !== null ? ` — next card ${formatNextDue(due.nextDueAt)}` : ""}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function ReviewScreen({ cards, onFinish }: { cards: CardRow[]; onFinish: () => void }) {
   const [index, setIndex] = useState(0);
   const [revealed, setRevealed] = useState(false);
   const shownAt = useRef(Date.now());
+  const currentCard = cards[index];
 
+  // The queue empties into the home screen, not a second empty-state — home already owns that.
   useEffect(() => {
-    fetch("/api/due")
-      .then((res) => res.json() as Promise<DueResponse>)
-      .then((data) => setQueue(data.cards))
-      .catch(() => setQueue([]));
-  }, []);
+    if (!currentCard) {
+      onFinish();
+    }
+  }, [currentCard, onFinish]);
 
-  const currentCard = queue?.[index];
-
-  const handleReveal = useCallback(() => {
-    setRevealed(true);
-  }, []);
+  const handleReveal = useCallback(() => setRevealed(true), []);
 
   const handleRate = useCallback(
     (rating: (typeof RATINGS)[number]["rating"]) => {
@@ -85,12 +108,8 @@ export function App() {
     [currentCard],
   );
 
-  if (queue === null) {
-    return <div className="empty-state">Loading…</div>;
-  }
-
   if (!currentCard) {
-    return <div className="empty-state">Nothing due right now.</div>;
+    return null; // onFinish() above navigates home
   }
 
   const front = JSON.parse(currentCard.front) as CardFront;
@@ -99,7 +118,7 @@ export function App() {
   return (
     <div className="app">
       <p className="progress">
-        {index + 1} / {queue.length}
+        {index + 1} / {cards.length}
       </p>
 
       {revealed ? (
@@ -133,4 +152,49 @@ export function App() {
       )}
     </div>
   );
+}
+
+type Screen = "home" | "review";
+
+export function App() {
+  const [screen, setScreen] = useState<Screen>("home");
+  const [due, setDue] = useState<DueResponse | null>(null);
+
+  const fetchDue = useCallback(() => {
+    fetch("/api/due")
+      .then((res) => res.json() as Promise<DueResponse>)
+      .then(setDue)
+      .catch(() => setDue({ cards: [], nextDueAt: null }));
+  }, []);
+
+  useEffect(() => {
+    if (screen === "home") {
+      fetchDue();
+    }
+  }, [screen, fetchDue]);
+
+  // Two screens don't justify a router: pushState on entering review, popstate returns home —
+  // this also makes the iOS back-swipe return to the menu instead of closing the app.
+  useEffect(() => {
+    function onPopState() {
+      setScreen("home");
+    }
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
+
+  const enterReview = useCallback(() => {
+    window.history.pushState({ screen: "review" }, "");
+    setScreen("review");
+  }, []);
+
+  const exitReview = useCallback(() => {
+    window.history.back();
+  }, []);
+
+  if (screen === "review" && due) {
+    return <ReviewScreen cards={due.cards} onFinish={exitReview} />;
+  }
+
+  return <HomeScreen due={due} onStartReview={enterReview} />;
 }
