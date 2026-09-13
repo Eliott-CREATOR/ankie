@@ -1,0 +1,23 @@
+# dependencies
+node_modules/
+.pnpm-store/
+
+# build output
+dist/
+build/
+.vite/
+
+# secrets — never commit these
+.env
+.env.*
+!.env.example
+.dev.vars
+.dev.vars.*
+
+# cloudflare
+.wrangler/
+
+# editor / os
+.DS_Store
+*.log
+.vscode/settings.json

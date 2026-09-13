@@ -1,0 +1,131 @@
+:root {
+  --bg: #0b0d12;
+  --bg-panel: #11141b;
+  --fg: #e7e9ee;
+  --fg-dim: #7a8194;
+  --accent-ok: #7ce38b;
+  --accent-error: #ff6b6b;
+  --border: #232733;
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  color: var(--fg);
+  background: radial-gradient(circle at 20% -10%, rgba(124, 227, 139, 0.08), transparent 45%),
+    repeating-linear-gradient(
+      90deg,
+      rgba(255, 255, 255, 0.02) 0,
+      rgba(255, 255, 255, 0.02) 1px,
+      transparent 1px,
+      transparent 32px
+    ), var(--bg);
+  -webkit-font-smoothing: antialiased;
+}
+
+.page {
+  min-height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.stagger {
+  opacity: 0;
+  animation: fade-up 0.5s ease-out forwards;
+}
+
+.stagger:nth-child(1) {
+  animation-delay: 0ms;
+}
+.stagger:nth-child(2) {
+  animation-delay: 90ms;
+}
+.stagger:nth-child(3) {
+  animation-delay: 180ms;
+}
+
+.eyebrow {
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.28em;
+  color: var(--accent-ok);
+  margin: 0 0 4px;
+}
+
+.title {
+  font-size: 15px;
+  font-weight: 200;
+  color: var(--fg-dim);
+  margin: 0 0 28px;
+}
+
+.card {
+  min-width: 320px;
+  border: 1px solid var(--border);
+  background: var(--bg-panel);
+  border-radius: 8px;
+  padding: 20px 24px;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+
+.row:last-child {
+  border-bottom: none;
+}
+
+.row-label {
+  color: var(--fg-dim);
+}
+
+.row-value {
+  font-weight: 700;
+}
+
+.dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 8px;
+}
+
+.dot--ok {
+  background: var(--accent-ok);
+  box-shadow: 0 0 8px var(--accent-ok);
+}
+
+.dot--error {
+  background: var(--accent-error);
+  box-shadow: 0 0 8px var(--accent-error);
+}

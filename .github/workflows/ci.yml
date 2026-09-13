@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.4.1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm run lint
+
+      - run: pnpm run typecheck
+
+      - run: pnpm run test
+
+      # apps/worker deploys apps/web/dist as its static assets (single-Worker,
+      # same-origin model — see .claude/CLAUDE.md). A deploy that runs
+      # `wrangler deploy` against a missing or stale dist/ ships silently wrong
+      # content, so CI rebuilds it fresh every run and then asks Wrangler
+      # itself to validate the assets directory it will actually deploy from.
+      - name: Build apps/web (must precede any apps/worker deploy)
+        run: pnpm run build:web
+
+      - name: Validate apps/worker sees a fresh apps/web/dist
+        working-directory: apps/worker
+        run: node_modules/.bin/wrangler deploy --dry-run

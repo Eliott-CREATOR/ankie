@@ -1,0 +1,18 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "ankie-worker",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-13",
+  "account_id": "9feac7fd570d3d411cdfab7a6400a96d",
+  "assets": {
+    "directory": "../web/dist",
+    "binding": "ASSETS"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "ankie",
+      "database_id": "e66bfc39-2372-4d15-a52c-8539b3ac196c"
+    }
+  ]
+}

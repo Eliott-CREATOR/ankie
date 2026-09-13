@@ -1,0 +1,21 @@
+{
+  "name": "ankie",
+  "private": true,
+  "engines": {
+    "node": "^25"
+  },
+  "packageManager": "pnpm@12.4.1",
+  "scripts": {
+    "lint": "biome check .",
+    "format": "biome check --write .",
+    "typecheck": "pnpm -r --if-present run typecheck",
+    "test": "vitest run",
+    "build:web": "pnpm --filter @ankie/web run build",
+    "deploy": "pnpm run build:web && pnpm --filter @ankie/worker run deploy"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "1.9.4",
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.5"
+  }
+}
