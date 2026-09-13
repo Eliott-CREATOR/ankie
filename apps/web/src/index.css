@@ -175,6 +175,14 @@ body {
   border-top: 1px solid var(--border);
 }
 
+.error-line {
+  color: var(--again);
+  font-size: 15px;
+  text-align: center;
+  margin: 0;
+  padding: 0 20px 8px;
+}
+
 .rating-btn {
   flex: 1;
   min-height: 44px;
@@ -184,6 +192,10 @@ body {
   font-size: 15px;
   font-weight: 600;
   font-family: inherit;
+}
+
+.rating-btn:disabled {
+  opacity: 0.5;
 }
 
 .rating-btn--again {

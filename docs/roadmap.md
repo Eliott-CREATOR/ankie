@@ -159,7 +159,7 @@ Deliberately contains **zero application logic.** Build the gate before the thin
 ### C1 — Review loop, online only
 
 - `packages/core`: FSRS wrapper around `ts-fsrs`, card types
-- Worker: `GET /due`, `POST /review`, `GET /sync`
+- Worker: `GET /due`, `POST /review`
 - PWA: minimal review screen — show front, reveal, four rating buttons
 - Seed ~50 real words from your English notes
 - The FSRS golden-file test
@@ -190,6 +190,8 @@ Deliberately contains **zero application logic.** Build the gate before the thin
 
 - Dexie/IndexedDB mirror, service worker, install prompt
 - `ts-fsrs` scheduling client-side
+- Worker: `GET /sync` — corrected here from C1, where it was listed by mistake; sync has no reason
+  to exist before there's a local mirror to reconcile against
 - Sync on foreground and on `visibilitychange`
 - Review-log union merge — client UUIDs mean no conflict resolution to write
 - Empirically test iOS storage eviction on your actual phone

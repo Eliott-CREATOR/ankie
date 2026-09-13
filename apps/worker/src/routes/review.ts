@@ -5,6 +5,7 @@ const CARD_COLUMNS = `id, sense_id, atom_type, front, back, state, unlock_after_
   last_review, updated_at`;
 
 interface ReviewRequestBody {
+  id?: unknown;
   cardId?: unknown;
   rating?: unknown;
   reviewedAt?: unknown;
@@ -15,9 +16,15 @@ function isValidRating(value: unknown): value is ReviewRating {
   return value === 1 || value === 2 || value === 3 || value === 4;
 }
 
-// POST /api/review — {cardId, rating, reviewedAt, durationMs}. Runs FSRS, updates the card and
-// appends to review_log in one D1 batch (transactional — both succeed or both fail). review_log
-// is append-only (docs/spec.md §4) — this never issues an UPDATE against it.
+// POST /api/review — {id, cardId, rating, reviewedAt, durationMs}. Runs FSRS, updates the card
+// and appends to review_log in one D1 batch (transactional — both succeed or both fail).
+// review_log is append-only (docs/spec.md §4) — this never issues an UPDATE against it.
+//
+// `id` is client-generated (docs/spec.md §4 — review-log rows carry client-generated UUIDs) and
+// checked for a prior row before anything else runs. Without this, a retried submission (the
+// client can't always tell a failed request from one whose response was lost) would apply FSRS
+// twice against the same rating — corrupting the schedule, not just double-logging it. A repeat
+// id is treated as "already recorded" and short-circuits with no writes at all.
 //
 // Every rejection below returns an explicit error response. The C0 gate's planted bug was a
 // swallowed error causing silent data loss — this project cannot afford that mistake twice.
@@ -29,6 +36,9 @@ export async function handleReview(request: Request, env: { DB: D1Database }): P
     return Response.json({ error: "invalid JSON body" }, { status: 400 });
   }
 
+  if (typeof body.id !== "string" || body.id.length === 0) {
+    return Response.json({ error: "id is required and must be a string" }, { status: 400 });
+  }
   if (typeof body.cardId !== "string" || body.cardId.length === 0) {
     return Response.json({ error: "cardId is required and must be a string" }, { status: 400 });
   }
@@ -38,14 +48,24 @@ export async function handleReview(request: Request, env: { DB: D1Database }): P
       { status: 400 },
     );
   }
+  const now = Date.now();
+  // Clamped, not merely validated: a client clock running ahead must never schedule a card into
+  // the future relative to the server, or it could become permanently undue.
   const reviewedAt =
     typeof body.reviewedAt === "number" && Number.isFinite(body.reviewedAt) && body.reviewedAt > 0
-      ? body.reviewedAt
-      : Date.now();
+      ? Math.min(body.reviewedAt, now)
+      : now;
   const durationMs =
     typeof body.durationMs === "number" && Number.isFinite(body.durationMs)
       ? body.durationMs
       : null;
+
+  const existing = await env.DB.prepare("SELECT 1 FROM review_log WHERE id = ?1")
+    .bind(body.id)
+    .first();
+  if (existing) {
+    return Response.json({ ok: true, duplicate: true, cardId: body.cardId });
+  }
 
   const card = await env.DB.prepare(`SELECT ${CARD_COLUMNS} FROM cards WHERE id = ?1`)
     .bind(body.cardId)
@@ -75,7 +95,6 @@ export async function handleReview(request: Request, env: { DB: D1Database }): P
   });
 
   const result = rateCard(scheduler, card, body.rating, new Date(reviewedAt));
-  const reviewLogId = crypto.randomUUID();
   const savedAt = Date.now();
 
   const updateCard = env.DB.prepare(
@@ -99,7 +118,7 @@ export async function handleReview(request: Request, env: { DB: D1Database }): P
   const insertLog = env.DB.prepare(
     `INSERT INTO review_log (id, card_id, rating, state_before, reviewed_at, duration_ms, typed_answer, device)
      VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, NULL)`,
-  ).bind(reviewLogId, card.id, body.rating, JSON.stringify(card), reviewedAt, durationMs);
+  ).bind(body.id, card.id, body.rating, JSON.stringify(card), reviewedAt, durationMs);
 
   try {
     await env.DB.batch([updateCard, insertLog]);
@@ -110,5 +129,5 @@ export async function handleReview(request: Request, env: { DB: D1Database }): P
     );
   }
 
-  return Response.json({ ok: true, cardId: card.id, reviewLogId, card: result.card });
+  return Response.json({ ok: true, cardId: card.id, reviewLogId: body.id, card: result.card });
 }

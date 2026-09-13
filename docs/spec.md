@@ -307,6 +307,12 @@ Card budget by frequency band: high-frequency and productive-target words get 3 
 FSRS decides *when*. These decide *what enters and what is shown*:
 
 1. Daily new-card budget, introduced in frequency-band order.
+   **C1 implementation note — day boundary is UTC, not local.** `GET /api/due` resets
+   `daily_new_limit`/`daily_review_limit` at UTC midnight. For Eliott in Singapore (UTC+8) that's
+   08:00 local — mid-morning, not overnight — so a full day's allotment can appear to reset while
+   he's mid-session, or the "next card" time on the home screen can read oddly close. **Record for
+   C3:** the proper fix is a timezone column in `settings`, not a UTC-offset hack; don't build it
+   before then.
 2. Never introduce two confusable words the same day.
 3. Sibling burying — production and recognition atoms of one sense never in one session.
 4. Production gate — cloze atom stays `locked` until recognition stability clears the threshold.

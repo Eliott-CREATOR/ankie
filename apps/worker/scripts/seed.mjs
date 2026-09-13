@@ -9,6 +9,12 @@
 // So seed rows get deterministic ids instead, derived from stable content hashes, paired with
 // INSERT OR IGNORE — running this twice is then a true no-op on the second run, for all three
 // tables, regardless of run order or a previous run being interrupted partway through.
+//
+// data/seed-words.csv carries definition_l2 directly (word, pos, translation_fr, definition_l2,
+// example_sentence, domain, register) — it didn't originally, which is why migrations 0002/0003
+// exist as one-off repairs of the database this seeded before the column was added. A fresh
+// database seeded from the current CSV needs neither repair; the migrations just run as no-ops
+// on it (nothing exists yet for them to match).
 
 import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
@@ -84,7 +90,11 @@ function normalizeLemma(word) {
 }
 
 function deterministicId(prefix, ...parts) {
-  const hash = createHash("sha256").update(parts.join("")).digest("hex").slice(0, 24);
+  // Joined with a plain separator, not concatenated bare or with a \u escape —
+  // "en"+"cat" vs "enc"+"at" must not hash the same, and a raw control byte here
+  // (which is what \u0001 silently became the first time this was written) is a landmine
+  // for the next edit: invisible in every editor, but present on disk.
+  const hash = createHash("sha256").update(parts.join(":")).digest("hex").slice(0, 24);
   return `${prefix}_${hash}`;
 }
 
@@ -122,14 +132,14 @@ for (const cols of dataRows) {
   );
 
   statements.push(
-    `INSERT OR IGNORE INTO senses (id, lexeme_id, sense_index, gloss_l1, definition_l2, register, domain, collocations, confusable_with, source_context, source_conversation, enrichment_status, created_at) VALUES (${sqlValue(senseId)}, ${sqlValue(lexemeId)}, 0, ${sqlValue(record.translation_fr)}, NULL, ${sqlValue(record.register)}, ${sqlValue(record.domain)}, NULL, NULL, ${sqlValue(record.example_sentence)}, NULL, 'complete', ${now});`,
+    `INSERT OR IGNORE INTO senses (id, lexeme_id, sense_index, gloss_l1, definition_l2, register, domain, collocations, confusable_with, source_context, source_conversation, enrichment_status, created_at) VALUES (${sqlValue(senseId)}, ${sqlValue(lexemeId)}, 0, ${sqlValue(record.translation_fr)}, ${sqlValue(record.definition_l2)}, ${sqlValue(record.register)}, ${sqlValue(record.domain)}, NULL, NULL, ${sqlValue(record.example_sentence)}, NULL, 'complete', ${now});`,
   );
 
   const front = JSON.stringify({ word: lemma, context_sentence: record.example_sentence });
   const back = JSON.stringify({
     word: lemma,
     gloss_l1: record.translation_fr,
-    definition_l2: null,
+    definition_l2: record.definition_l2 || null,
     context_sentence: record.example_sentence,
   });
 

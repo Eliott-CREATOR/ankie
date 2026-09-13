@@ -1,5 +1,9 @@
 -- Adds English definitions to the 50 seed senses (definition_l2 was null after C1 Step 2).
 -- Idempotent: matches on lexeme lemma, sets the same value every run.
+--
+-- One-off repair of the database that existed before data/seed-words.csv carried a
+-- definition_l2 column. Not needed on a fresh database — apps/worker/scripts/seed.mjs emits
+-- definition_l2 directly now, so every UPDATE below matches zero rows there and is a no-op.
 
 UPDATE senses SET definition_l2 = 'A problem that is difficult to solve because every available option has a serious drawback.' WHERE lexeme_id = (SELECT id FROM lexemes WHERE lemma_norm = 'conundrum');
 UPDATE senses SET definition_l2 = 'Found everywhere; so common that you stop noticing it.' WHERE lexeme_id = (SELECT id FROM lexemes WHERE lemma_norm = 'ubiquitous');

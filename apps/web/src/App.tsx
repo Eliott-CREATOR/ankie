@@ -1,5 +1,6 @@
 import type { CardRow } from "@ankie/core";
 import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
+import { submitReview } from "./submitReview.js";
 
 interface DueResponse {
   cards: CardRow[];
@@ -69,8 +70,14 @@ function HomeScreen({
 function ReviewScreen({ cards, onFinish }: { cards: CardRow[]; onFinish: () => void }) {
   const [index, setIndex] = useState(0);
   const [revealed, setRevealed] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const shownAt = useRef(Date.now());
+  // Reused across retries of the same card so a resubmitted request is recognisable as a repeat
+  // (apps/worker/src/routes/review.ts) rather than applying the rating twice.
+  const pendingId = useRef<{ cardId: string; id: string } | null>(null);
   const currentCard = cards[index];
+  const currentCardId = currentCard?.id;
 
   // The queue empties into the home screen, not a second empty-state — home already owns that.
   useEffect(() => {
@@ -79,33 +86,50 @@ function ReviewScreen({ cards, onFinish }: { cards: CardRow[]; onFinish: () => v
     }
   }, [currentCard, onFinish]);
 
+  // Timer starts when a card actually renders, not when the screen mounts — a failed submission
+  // doesn't advance the card, so this doesn't refire, and duration on retry still reflects the
+  // whole time the card was up, not just the moment of the second tap.
+  useEffect(() => {
+    if (currentCardId) {
+      shownAt.current = Date.now();
+    }
+  }, [currentCardId]);
+
   const handleReveal = useCallback(() => setRevealed(true), []);
 
   const handleRate = useCallback(
-    (rating: (typeof RATINGS)[number]["rating"]) => {
-      if (!currentCard) {
+    async (rating: (typeof RATINGS)[number]["rating"]) => {
+      if (!currentCard || submitting) {
         return;
       }
+      if (!pendingId.current || pendingId.current.cardId !== currentCard.id) {
+        pendingId.current = { cardId: currentCard.id, id: crypto.randomUUID() };
+      }
+      const { id } = pendingId.current;
       const durationMs = Date.now() - shownAt.current;
 
-      fetch("/api/review", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          cardId: currentCard.id,
-          rating,
-          reviewedAt: Date.now(),
-          durationMs,
-        }),
-      }).catch(() => {
-        // Best-effort for C1 (online-only) — offline queuing/retry is C4's job.
+      setSubmitting(true);
+      setError(null);
+
+      const result = await submitReview({
+        id,
+        cardId: currentCard.id,
+        rating,
+        reviewedAt: Date.now(),
+        durationMs,
       });
 
-      setIndex((i) => i + 1);
-      setRevealed(false);
-      shownAt.current = Date.now();
+      setSubmitting(false);
+
+      if (result.ok) {
+        pendingId.current = null;
+        setIndex((i) => i + 1);
+        setRevealed(false);
+      } else {
+        setError(result.error);
+      }
     },
-    [currentCard],
+    [currentCard, submitting],
   );
 
   if (!currentCard) {
@@ -136,6 +160,8 @@ function ReviewScreen({ cards, onFinish }: { cards: CardRow[]; onFinish: () => v
         </button>
       )}
 
+      {error && <p className="error-line">{error}</p>}
+
       {revealed && (
         <div className="rating-row">
           {RATINGS.map(({ rating, label, className }) => (
@@ -143,6 +169,7 @@ function ReviewScreen({ cards, onFinish }: { cards: CardRow[]; onFinish: () => v
               key={rating}
               type="button"
               className={`rating-btn ${className}`}
+              disabled={submitting}
               onClick={() => handleRate(rating)}
             >
               {label}
