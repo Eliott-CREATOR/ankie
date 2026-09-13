@@ -260,6 +260,20 @@ ankie_log_production(word, sentence, verdict, notes)  // the training section, l
 
 `ankie_get_leeches` **is the point of the whole system.** The app names what is not sticking; Claude re-teaches it from a different angle and pushes a replacement card. Anki suspends a leech and forgets about it.
 
+**`ankie_enrich` will hit a real trap here.** `cards.front`/`cards.back` are materialized JSON
+snapshots taken at write time (`apps/worker/scripts/seed.mjs` in C1), not a live join against
+`senses` — the API serves them directly, with no per-request join, which is exactly what makes
+`GET /api/due` a single round trip. C1 discovered the cost of that the hard way: a migration
+updated `senses.definition_l2` but left the stale value baked into `cards.back`, and it took a
+second migration (`0003_refresh_card_back_definitions.sql`) to fix. `ankie_enrich` changes
+`senses` content the same way — any field it touches that also appears in a card's `front`/`back`
+must refresh both the sense row and every card materialized from it, or the API will keep serving
+stale content indefinitely with no error to surface the drift.
+**Decide at C2, not now:** either make enrichment always re-materialize affected cards in the same
+write, or move `front`/`back` construction to read time (a join per `/api/due` call, trading the
+single-round-trip property for correctness-by-construction). Don't default to the C1 pattern
+without weighing that trade explicitly.
+
 **Auth:** Cloudflare Access (free, ≤50 users) in front of the Worker. Never expose an unauthenticated MCP endpoint — anyone who found the URL could write to the deck.
 
 **Reference reading before designing the tools:** the existing Anki MCP servers ([nailuoGG](https://github.com/nailuoGG/anki-mcp-server), [CamdenClark](https://github.com/CamdenClark/anki-mcp-server), [ankimcp](https://github.com/ankimcp/anki-mcp-server)) all route through AnkiConnect and therefore need Anki desktop running — useless for phone-first — but their tool naming and argument shapes are a free design review.
