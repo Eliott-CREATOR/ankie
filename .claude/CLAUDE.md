@@ -122,3 +122,21 @@ instruction. Do not treat this as equivalent to the configured subagent at any f
 C1's gate, either get `code-reviewer` discoverable for real, or explicitly re-confirm the workaround
 with the project owner each time. Silently normalizing the substitute defeats the reason C0 put
 `tools:` restrictions in configuration instead of a prompt in the first place.
+
+## Debugging
+
+**If an `Edit` fails to match text that looks correct on screen, grep the file for stray control
+bytes before assuming the tool is wrong or the file changed.** A Unicode escape sequence (`\u`
+followed by four hex digits) has silently turned into a raw control character in this project
+twice — once in a diacritics-stripping regex (C1 Step 1), once in `seed.mjs`'s id-hash separator
+(C1 gate review). Both times the character was invisible in the Read tool's output and in every
+editor, so the file looked identical to what was intended while the bytes on disk didn't match.
+Both were only found because Biome's linter happened to flag one of them directly, and an `Edit`
+call mysteriously failing to match visibly-correct text flagged the other.
+
+To check: read the file as raw bytes and scan for control characters outside normal whitespace,
+e.g. a small Python one-liner opening the file in binary mode and filtering for byte values below
+0x09 or in 0x0e-0x1f. If found, replace the offending sequence by writing the file in binary mode
+directly — going back through `Edit`/`Write` with the same `\u` escape text risks reproducing the
+exact same corruption. Prefer a plain printable separator (e.g. `:`) over a control-character
+escape wherever one would do the same job.
