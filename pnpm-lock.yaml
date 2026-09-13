@@ -207,7 +207,11 @@ importers:
         specifier: ^4.131.1
         version: 4.131.1(@cloudflare/workers-types@4.20260702.1)
 
-  packages/core: {}
+  packages/core:
+    dependencies:
+      ts-fsrs:
+        specifier: 5.4.2
+        version: 5.4.2
 
 packages:
 
@@ -1540,6 +1544,10 @@ packages:
     resolution: {integrity: sha512-u8KszXvGfU68hVcZpRHKG28T0krMuv2G5nDhiHaMLen/gIuFEgIJhaJuO69qjnXg5paSrbPMFfx3brNuN8eVSg==}
     engines: {node: '>=14.0.0'}
 
+  ts-fsrs@5.4.2:
+    resolution: {integrity: sha512-z4qop4pzTcyTzuJ566d9EaX/4bZZzhYfeaPImfVr+xcYT65c5oBgFDijUhCE/D+C78eaolHIhKRZ04/RwF+v2g==}
+    engines: {node: '>=20.0.0'}
+
   tslib@2.8.1:
     resolution: {integrity: sha512-oJFu94HQb+KVduSUQL7wnpmqnfmLsOA/nAh6b6EH0wCEoK0/mPeXU6c3wKDV83MkOuHPRHtSXKKU99IBazS/2w==}
 
@@ -2766,6 +2774,8 @@ snapshots:
   tinyrainbow@2.0.0: {}
 
   tinyspy@4.0.6: {}
+
+  ts-fsrs@5.4.2: {}
 
   tslib@2.8.1:
     optional: true

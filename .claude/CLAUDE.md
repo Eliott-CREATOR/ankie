@@ -40,6 +40,7 @@ adds or removes one.
 | `react`, `react-dom` | `apps/web` dependency | The spec names React for the PWA (`docs/spec.md` §3). |
 | `vite`, `@vitejs/plugin-react` | `apps/web` devDependency | Dev server + build. Required by the spec's "Vite + React + TypeScript" (`docs/roadmap.md` C0). |
 | `@types/react`, `@types/react-dom` | `apps/web` devDependency | Ambient types for React under `strict` `tsc`. |
+| `ts-fsrs` | `packages/core` dependency | The one scheduler implementation, imported by both apps. Pinned exactly at `5.4.2` (no `^`) — see "Scheduler version" below for why this isn't the FSRS-6 the spec originally named. |
 
 ## Deployment architecture
 
@@ -73,6 +74,15 @@ to `"single-page-application"` — that setting intercepts *any* unmatched path 
 `index.html` before the Worker script ever runs, which would silently swallow `/health` and every
 future API route. Revisit only if client-side routing is added and needs a real SPA fallback, and
 then scope it with `run_worker_first` rather than a blanket setting.
+
+## Scheduler version
+
+`packages/core` ships **FSRS-5** via `ts-fsrs@5.4.2` (exact-pinned), not the FSRS-6 the spec
+originally named — `ts-fsrs` has no stable v6 release, only a still-changing beta backed by a
+rewritten dependency. Full reasoning and the C5 optimizer-version-matching constraint:
+`docs/spec.md` §3.1. Do not bump `ts-fsrs` to a `6.0.0-beta.*` version for any reason short of a
+deliberate, reviewed migration — the golden-file test exists to catch scheduling drift, and a
+moving beta would make it fail on every upstream bump instead of on real regressions.
 
 ## Chantier discipline
 

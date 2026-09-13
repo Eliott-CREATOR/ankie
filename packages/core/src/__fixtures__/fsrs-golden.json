@@ -1,0 +1,102 @@
+{
+  "start": "2026-01-01T00:00:00.000Z",
+  "ratings": [3, 3, 2, 3, 1, 3, 3, 4],
+  "steps": [
+    {
+      "rating": 3,
+      "state": "review",
+      "due": 1767484800000,
+      "stability": 2.3065,
+      "difficulty": 2.11810397,
+      "elapsed_days": 0,
+      "scheduled_days": 3,
+      "reps": 1,
+      "lapses": 0,
+      "last_review": 1767225600000
+    },
+    {
+      "rating": 3,
+      "state": "review",
+      "due": 1768694400000,
+      "stability": 13.82690327,
+      "difficulty": 2.11121424,
+      "elapsed_days": 3,
+      "scheduled_days": 14,
+      "reps": 2,
+      "lapses": 0,
+      "last_review": 1767484800000
+    },
+    {
+      "rating": 2,
+      "state": "review",
+      "due": 1772150400000,
+      "stability": 39.76516891,
+      "difficulty": 4.74828477,
+      "elapsed_days": 14,
+      "scheduled_days": 40,
+      "reps": 3,
+      "lapses": 0,
+      "last_review": 1768694400000
+    },
+    {
+      "rating": 3,
+      "state": "review",
+      "due": 1781913600000,
+      "stability": 112.58505996,
+      "difficulty": 4.73876485,
+      "elapsed_days": 40,
+      "scheduled_days": 113,
+      "reps": 4,
+      "lapses": 0,
+      "last_review": 1772150400000
+    },
+    {
+      "rating": 1,
+      "state": "review",
+      "due": 1782259200000,
+      "stability": 3.92902525,
+      "difficulty": 8.25589615,
+      "elapsed_days": 113,
+      "scheduled_days": 4,
+      "reps": 5,
+      "lapses": 1,
+      "last_review": 1781913600000
+    },
+    {
+      "rating": 3,
+      "state": "review",
+      "due": 1783036800000,
+      "stability": 8.61307837,
+      "difficulty": 8.24286862,
+      "elapsed_days": 4,
+      "scheduled_days": 9,
+      "reps": 6,
+      "lapses": 1,
+      "last_review": 1782259200000
+    },
+    {
+      "rating": 3,
+      "state": "review",
+      "due": 1784592000000,
+      "stability": 17.83427861,
+      "difficulty": 8.22985412,
+      "elapsed_days": 9,
+      "scheduled_days": 18,
+      "reps": 7,
+      "lapses": 1,
+      "last_review": 1783036800000
+    },
+    {
+      "rating": 4,
+      "state": "review",
+      "due": 1788825600000,
+      "stability": 48.88561352,
+      "difficulty": 7.62358223,
+      "elapsed_days": 18,
+      "scheduled_days": 49,
+      "reps": 8,
+      "lapses": 1,
+      "last_review": 1784592000000
+    }
+  ]
+}

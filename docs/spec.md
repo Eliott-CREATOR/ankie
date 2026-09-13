@@ -16,7 +16,7 @@ A personal spaced-repetition vocabulary app. The distinguishing feature is not t
 | Stack | **All-TypeScript on Cloudflare** — Workers + D1 + Pages |
 | Review surface | iPhone PWA, **offline-capable**; laptop browser as a bonus |
 | Languages | English (B2→C1) populated; **schema is language-agnostic** |
-| Scheduler | **FSRS v6 — `ts-fsrs` only**, one implementation, client and server |
+| Scheduler | **FSRS — `ts-fsrs` only**, one implementation, client and server. **Currently FSRS-5** (`ts-fsrs@5.4.2` stable) — see §3.1 for the FSRS-6 upgrade note. |
 | Optimizer | **`fsrs-browser`** (WASM) — trains on-device, no server compute |
 | Audio | **Web Speech API** — Apple's on-device voices, offline, zero bytes |
 | Enrichment | **No runtime LLM.** Claude in the conversation is the enrichment layer |
@@ -84,7 +84,7 @@ The earlier draft had spaCy, `wordfreq` and bge-m3 embeddings server-side. All r
    ┌────────────────────────────────────────┐
    │  Cloudflare Pages — the PWA            │
    │  · Dexie / IndexedDB mirror            │
-   │  · ts-fsrs v6           (scheduling)   │
+   │  · ts-fsrs              (scheduling)   │
    │  · fsrs-browser WASM    (optimizer)    │
    │  · speechSynthesis      (audio)        │
    │  · sync on foreground                  │
@@ -92,6 +92,25 @@ The earlier draft had spaCy, `wordfreq` and bge-m3 embeddings server-side. All r
 ```
 
 Monorepo, pnpm workspaces: `apps/worker`, `apps/web`, `packages/core` (schema types + FSRS wrapper + card-atom logic, shared by both — this is what keeps one implementation honest).
+
+### 3.1 FSRS version — currently FSRS-5, not FSRS-6
+
+This spec named FSRS v6 throughout on the strength of a docs badge, not the actual npm release
+state. As of C1, `ts-fsrs` has no stable v6 release — only `5.4.2` (stable, FSRS-5) or
+`6.0.0-beta.9` (FSRS-6, backed by a rewritten dependency and still actively changing between
+betas). The golden-file test exists specifically to catch unintended scheduling drift; running it
+against a moving beta would make it fail legitimately on every bump, trading the project's most
+valuable test for a spec sentence. **C1 ships FSRS-5 via `ts-fsrs@5.4.2`.**
+
+- **Upgrade trigger:** `ts-fsrs` 6.0.0 leaves beta.
+- **No data loss on upgrade.** `review_log` is version-agnostic — it stores ratings, not FSRS
+  internals. Upgrading later loses no accumulated history; the optimizer retrains from the same
+  review log regardless of which FSRS version produced the schedule at the time.
+- **C5 constraint.** The `fsrs-browser` optimizer must match the scheduler's FSRS version. FSRS-5
+  and FSRS-6 use different parameter counts, so an FSRS-6-trained parameter set feeding an FSRS-5
+  scheduler (or vice versa) would produce silently wrong intervals — exactly the failure mode this
+  project's golden-file test is meant to prevent. Whichever version C5 runs, scheduler and
+  optimizer move together, never independently.
 
 ---
 
