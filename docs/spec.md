@@ -112,6 +112,19 @@ valuable test for a spec sentence. **C1 ships FSRS-5 via `ts-fsrs@5.4.2`.**
   project's golden-file test is meant to prevent. Whichever version C5 runs, scheduler and
   optimizer move together, never independently.
 
+**Open question — `enable_short_term: false`, not yet settled.** `packages/core`'s FSRS wrapper
+disables short-term (re)learning steps because the `cards` table has no `learning_steps` column
+to persist ts-fsrs's step-progress counter — a decision that followed correctly from the schema.
+But the schema gap has a product consequence, not just a technical one: with short-term steps off,
+a new word is shown once and not seen again for days (no same-session or next-day repetition to
+consolidate it), and a lapse (`Again`) goes straight back into long-term `review` scheduling
+instead of a short relearning step. That's a real pedagogical trade, and it fell out of a missing
+column, not a deliberate choice about how new words should be learned. Adding a `learning_steps`
+column and turning short-term steps back on is cheap later — `review_log` stays valid either way,
+since it records ratings, not step state — so this isn't a schema lock-in, just an open question.
+**Evaluate at C1's gate**, against the actual review sessions, whether new-word introduction and
+lapse handling feel right without short-term steps, or whether the column should be added.
+
 ---
 
 ## 4. Data model (D1 / SQLite)
