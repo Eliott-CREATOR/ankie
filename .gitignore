@@ -7,6 +7,9 @@ dist/
 build/
 .vite/
 
+# regenerated from data/seed-words.csv by apps/worker/scripts/seed.mjs — not a source file
+apps/worker/scripts/seed-generated.sql
+
 # secrets — never commit these
 .env
 .env.*
