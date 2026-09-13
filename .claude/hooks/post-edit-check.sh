@@ -23,11 +23,12 @@ esac
 BIOME="$ROOT/node_modules/.bin/biome"
 TSC="$ROOT/node_modules/.bin/tsc"
 
+STATUS=0
+
 if [ -x "$BIOME" ]; then
-  "$BIOME" check --write "$FILE_PATH" 1>&2
+  "$BIOME" check --write "$FILE_PATH" 1>&2 || STATUS=1
 fi
 
-STATUS=0
 if [ -x "$TSC" ]; then
   for CFG in "$ROOT"/apps/*/tsconfig.json "$ROOT"/packages/*/tsconfig.json; do
     [ -f "$CFG" ] || continue
@@ -36,7 +37,7 @@ if [ -x "$TSC" ]; then
 fi
 
 if [ "$STATUS" -ne 0 ]; then
-  echo "[hook] tsc found type errors after editing $FILE_PATH — fix before continuing." >&2
+  echo "[hook] biome or tsc found problems after editing $FILE_PATH — fix before continuing." >&2
   exit 2
 fi
 

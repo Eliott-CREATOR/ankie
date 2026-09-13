@@ -199,6 +199,10 @@ importers:
         version: 6.4.3
 
   apps/worker:
+    dependencies:
+      '@ankie/core':
+        specifier: workspace:*
+        version: link:../../packages/core
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20250906.0

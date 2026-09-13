@@ -77,7 +77,10 @@ function parseCsv(text) {
 }
 
 function normalizeLemma(word) {
-  return word.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+  return word
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .toLowerCase();
 }
 
 function deterministicId(prefix, ...parts) {
@@ -115,13 +118,11 @@ for (const cols of dataRows) {
   const cardId = deterministicId("crd", senseId, "recognition");
 
   statements.push(
-    `INSERT OR IGNORE INTO lexemes (id, language_code, lemma, lemma_norm, pos, ipa, frequency_band, created_at) ` +
-      `VALUES (${sqlValue(lexemeId)}, ${sqlValue(languageCode)}, ${sqlValue(lemma)}, ${sqlValue(lemmaNorm)}, ${sqlValue(pos)}, NULL, NULL, ${now});`,
+    `INSERT OR IGNORE INTO lexemes (id, language_code, lemma, lemma_norm, pos, ipa, frequency_band, created_at) VALUES (${sqlValue(lexemeId)}, ${sqlValue(languageCode)}, ${sqlValue(lemma)}, ${sqlValue(lemmaNorm)}, ${sqlValue(pos)}, NULL, NULL, ${now});`,
   );
 
   statements.push(
-    `INSERT OR IGNORE INTO senses (id, lexeme_id, sense_index, gloss_l1, definition_l2, register, domain, collocations, confusable_with, source_context, source_conversation, enrichment_status, created_at) ` +
-      `VALUES (${sqlValue(senseId)}, ${sqlValue(lexemeId)}, 0, ${sqlValue(record.translation_fr)}, NULL, ${sqlValue(record.register)}, ${sqlValue(record.domain)}, NULL, NULL, ${sqlValue(record.example_sentence)}, NULL, 'complete', ${now});`,
+    `INSERT OR IGNORE INTO senses (id, lexeme_id, sense_index, gloss_l1, definition_l2, register, domain, collocations, confusable_with, source_context, source_conversation, enrichment_status, created_at) VALUES (${sqlValue(senseId)}, ${sqlValue(lexemeId)}, 0, ${sqlValue(record.translation_fr)}, NULL, ${sqlValue(record.register)}, ${sqlValue(record.domain)}, NULL, NULL, ${sqlValue(record.example_sentence)}, NULL, 'complete', ${now});`,
   );
 
   const front = JSON.stringify({ word: lemma, context_sentence: record.example_sentence });
@@ -133,8 +134,7 @@ for (const cols of dataRows) {
   });
 
   statements.push(
-    `INSERT OR IGNORE INTO cards (id, sense_id, atom_type, front, back, state, unlock_after_card, unlock_min_stability, due, stability, difficulty, elapsed_days, scheduled_days, reps, lapses, last_review, updated_at) ` +
-      `VALUES (${sqlValue(cardId)}, ${sqlValue(senseId)}, 'recognition', ${sqlValue(front)}, ${sqlValue(back)}, 'new', NULL, NULL, NULL, NULL, NULL, 0, 0, 0, 0, NULL, ${now});`,
+    `INSERT OR IGNORE INTO cards (id, sense_id, atom_type, front, back, state, unlock_after_card, unlock_min_stability, due, stability, difficulty, elapsed_days, scheduled_days, reps, lapses, last_review, updated_at) VALUES (${sqlValue(cardId)}, ${sqlValue(senseId)}, 'recognition', ${sqlValue(front)}, ${sqlValue(back)}, 'new', NULL, NULL, NULL, NULL, NULL, 0, 0, 0, 0, NULL, ${now});`,
   );
 }
 

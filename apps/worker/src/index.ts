@@ -1,3 +1,6 @@
+import { handleDue } from "./routes/due.js";
+import { handleReview } from "./routes/review.js";
+
 interface Env {
   DB: D1Database;
 }
@@ -18,6 +21,14 @@ export default {
       }
 
       return Response.json({ ok: true, version: VERSION, dbReachable });
+    }
+
+    if (url.pathname === "/api/due" && request.method === "GET") {
+      return handleDue(env);
+    }
+
+    if (url.pathname === "/api/review" && request.method === "POST") {
+      return handleReview(request, env);
     }
 
     return new Response("Not found", { status: 404 });
