@@ -178,6 +178,9 @@ importers:
 
   apps/web:
     dependencies:
+      '@ankie/core':
+        specifier: workspace:*
+        version: link:../../packages/core
       react:
         specifier: ^19.0.0
         version: 19.3.0

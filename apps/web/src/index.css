@@ -1,16 +1,33 @@
 :root {
-  --bg: #0b0d12;
-  --bg-panel: #11141b;
-  --fg: #e7e9ee;
-  --fg-dim: #7a8194;
-  --accent-ok: #7ce38b;
-  --accent-error: #ff6b6b;
-  --border: #232733;
-  color-scheme: dark;
+  --bg: #ffffff;
+  --fg: #111111;
+  --fg-dim: #6b6b70;
+  --border: #e5e5ea;
+  --again: #ff3b30;
+  --hard: #ff9500;
+  --good: #34c759;
+  --easy: #007aff;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    /* iOS's own dark-mode system colors — a different palette, not an inverted light one. */
+    --bg: #000000;
+    --fg: #f2f2f7;
+    --fg-dim: #98989f;
+    --border: #38383a;
+    --again: #ff453a;
+    --hard: #ff9f0a;
+    --good: #30d158;
+    --easy: #0a84ff;
+    color-scheme: dark;
+  }
 }
 
 * {
   box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
 }
 
 html,
@@ -21,111 +38,134 @@ body,
 
 body {
   margin: 0;
-  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  font-size: 17px;
   color: var(--fg);
-  background: radial-gradient(circle at 20% -10%, rgba(124, 227, 139, 0.08), transparent 45%),
-    repeating-linear-gradient(
-      90deg,
-      rgba(255, 255, 255, 0.02) 0,
-      rgba(255, 255, 255, 0.02) 1px,
-      transparent 1px,
-      transparent 32px
-    ), var(--bg);
+  background: var(--bg);
+  overscroll-behavior: none;
+  user-select: none;
+  touch-action: manipulation;
   -webkit-font-smoothing: antialiased;
 }
 
-.page {
+.app {
   min-height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.progress {
+  padding: max(16px, env(safe-area-inset-top)) 20px 0;
+  font-size: 13px;
+  color: var(--fg-dim);
+  text-align: right;
+}
+
+.card-area {
+  flex: 1;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  text-align: center;
+  gap: 16px;
+  /* Reset: this is a <button> so the tap-anywhere-to-reveal target is keyboard/AT accessible. */
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+}
+
+.word {
+  font-size: 36px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  margin: 0;
+}
+
+.context {
+  font-size: 17px;
+  line-height: 1.6;
+  color: var(--fg-dim);
+  margin: 0;
+  max-width: 34em;
+}
+
+.back {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  max-width: 34em;
+}
+
+/* English is the primary retrieval path; French is the safety net — definition reads first. */
+.definition {
+  font-size: 20px;
+  line-height: 1.5;
+  margin: 0;
+}
+
+.gloss {
+  font-size: 17px;
+  color: var(--fg-dim);
+  margin: 0;
+}
+
+.source {
+  font-size: 15px;
+  line-height: 1.6;
+  color: var(--fg-dim);
+  margin: 0;
+  padding-top: 4px;
+  border-top: 1px solid var(--border);
+}
+
+.source strong {
+  color: var(--fg);
+  font-weight: 700;
+}
+
+.rating-row {
+  display: flex;
+  gap: 8px;
+  padding: 12px;
+  padding-bottom: max(12px, env(safe-area-inset-bottom));
+  border-top: 1px solid var(--border);
+}
+
+.rating-btn {
+  flex: 1;
+  min-height: 44px;
+  border: none;
+  border-radius: 10px;
+  color: #ffffff;
+  font-size: 15px;
+  font-weight: 600;
+  font-family: inherit;
+}
+
+.rating-btn--again {
+  background: var(--again);
+}
+.rating-btn--hard {
+  background: var(--hard);
+}
+.rating-btn--good {
+  background: var(--good);
+}
+.rating-btn--easy {
+  background: var(--easy);
+}
+
+.empty-state {
+  flex: 1;
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 24px;
-}
-
-@keyframes fade-up {
-  from {
-    opacity: 0;
-    transform: translateY(8px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-.stagger {
-  opacity: 0;
-  animation: fade-up 0.5s ease-out forwards;
-}
-
-.stagger:nth-child(1) {
-  animation-delay: 0ms;
-}
-.stagger:nth-child(2) {
-  animation-delay: 90ms;
-}
-.stagger:nth-child(3) {
-  animation-delay: 180ms;
-}
-
-.eyebrow {
-  font-size: 12px;
-  font-weight: 800;
-  letter-spacing: 0.28em;
-  color: var(--accent-ok);
-  margin: 0 0 4px;
-}
-
-.title {
-  font-size: 15px;
-  font-weight: 200;
+  text-align: center;
   color: var(--fg-dim);
-  margin: 0 0 28px;
-}
-
-.card {
-  min-width: 320px;
-  border: 1px solid var(--border);
-  background: var(--bg-panel);
-  border-radius: 8px;
-  padding: 20px 24px;
-}
-
-.row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 8px 0;
-  border-bottom: 1px solid var(--border);
-  font-size: 13px;
-}
-
-.row:last-child {
-  border-bottom: none;
-}
-
-.row-label {
-  color: var(--fg-dim);
-}
-
-.row-value {
-  font-weight: 700;
-}
-
-.dot {
-  display: inline-block;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  margin-right: 8px;
-}
-
-.dot--ok {
-  background: var(--accent-ok);
-  box-shadow: 0 0 8px var(--accent-ok);
-}
-
-.dot--error {
-  background: var(--accent-error);
-  box-shadow: 0 0 8px var(--accent-error);
+  font-size: 17px;
 }
