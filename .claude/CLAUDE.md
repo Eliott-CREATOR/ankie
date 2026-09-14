@@ -31,8 +31,8 @@ governs every write, not a replacement for them.
 Say "set" or "rotated" and stop. A value that appears in a chat transcript is burned and has to
 be rotated. Read secrets from where they live (`apps/worker/.dev.vars` locally, `wrangler secret`
 in production), never from an earlier message in the session — assume anything you saw earlier
-is already stale. In shell, reach a secret through a subshell (`$(grep '^NAME=' .dev.vars | ...)`)
-so the value is never in the command text either.
+is already stale. In shell, reach a secret through a subshell (`$(command grep '^NAME=' .dev.vars | ...)`)
+so the value is never in the command text either — `command grep`, see "Debugging" for why.
 
 **An unset secret fails loudly, never quietly becomes a weak one.** `env.AUTH_PASSWORD` undefined
 reaches `TextEncoder` as the literal string `"undefined"` and that becomes the password. Every
@@ -158,6 +158,15 @@ e.g. a small Python one-liner opening the file in binary mode and filtering for 
 directly — going back through `Edit`/`Write` with the same `\u` escape text risks reproducing the
 exact same corruption. Prefer a plain printable separator (e.g. `:`) over a control-character
 escape wherever one would do the same job.
+
+**`rtk` also rewrites `grep` at the top level of a pipeline, and the rewritten output carries a
+decoration prefix (`🔍 1 in 1F:📄 .dev.vars (1):`) on stdout.** In C2 Step 3 the pipeline
+`grep '^API_SECRET=' .dev.vars | cut ... | wrangler secret put API_SECRET` uploaded that prefix
+as part of the secret — `wrangler` reported success, production answered 401 to the correct
+header, and nothing said why. The same `grep` inside a `$(...)` substitution is left alone, which
+is why every `curl -H "x-ankie-secret: $(grep ...)"` in the same session worked. When the bytes
+matter (a secret, a hash, anything compared exactly): use `command grep`, read the file from
+Python, or feed `wrangler secret bulk` a JSON file — never a bare `grep` at the head of a pipe.
 
 **Never prove a checkpoint from piped `curl` output — this environment's `rtk` hook rewrites it.**
 `curl` against a local dev endpoint returning `{"cards":[],"nextDueAt":1789344000000}` came back
