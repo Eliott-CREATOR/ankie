@@ -240,6 +240,8 @@ Roughly zero out of five. Multi-agent also costs "2× to over 10×" the tokens t
 
 **Revisit at C4**, the one chantier where the offline frontend and the sync backend are genuinely independent — run it under Conductor as a low-stakes experiment. And note that **Horlogerie is the codebase where a real swarm pays off**: bigger, with genuinely separable backend, frontend, BI and agent workstreams.
 
+**Narrow exception, 2026-09-14:** a single scoped task where `apps/web` is genuinely untouched by the active chantier passes this section's own test early — see AGENTS.md, "Working with two agents," and `docs/agent-handoff.md` for what's active.
+
 ---
 
 ## 6. Definition of done — what "clean" means here
