@@ -11,14 +11,16 @@ export async function handleAppRequest(request: Request, env: Env): Promise<Resp
 
   if (url.pathname === "/health" && request.method === "GET") {
     let dbReachable: boolean;
+    let dbError: string | undefined;
     try {
       await env.DB.prepare("SELECT 1").first();
       dbReachable = true;
-    } catch {
+    } catch (err) {
       dbReachable = false;
+      dbError = err instanceof Error ? err.message : String(err);
     }
 
-    return Response.json({ ok: true, version: VERSION, dbReachable });
+    return Response.json({ ok: true, version: VERSION, dbReachable, ...(dbError && { dbError }) });
   }
 
   if (url.pathname === "/api/due" && request.method === "GET") {

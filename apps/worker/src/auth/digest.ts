@@ -6,9 +6,11 @@ async function sha256Hex(input: string): Promise<string> {
     .join("");
 }
 
-// Two call sites (the OAuth /authorize password check, and the PWA's /api/* header check) —
-// two duplications, not three, so this stays a single small helper rather than a larger auth
-// abstraction (docs/spec.md §5.1, CLAUDE.md rule 1).
+// One call site today (the OAuth /authorize password check). A second — the PWA's /api/* header
+// check — lands in Step 3 alongside /api/ingest; /api/due and /api/review are still
+// unauthenticated as of this commit. Keep this a single small helper, not a larger auth
+// abstraction, once that second call site exists — two duplications, not three
+// (docs/spec.md §5.1, CLAUDE.md rule 1).
 //
 // Hashes both sides before comparing, per docs/spec.md §5.1: comparing the raw secrets directly
 // leaks their length and timing through a naive === or early-exit loop. SHA-256 digests are a

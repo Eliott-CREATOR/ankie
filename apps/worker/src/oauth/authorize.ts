@@ -2,6 +2,21 @@ import type { AuthRequest } from "@cloudflare/workers-oauth-provider";
 import { secretsMatch } from "../auth/digest.js";
 import type { Env } from "../env.js";
 
+// DCR registration (docs/spec.md §5.1) is open — anyone can POST /register with any
+// clientName and redirectUri. completeAuthorization re-validates redirectUri against
+// whatever that client registered for itself (confirmed by reading
+// node_modules/@cloudflare/workers-oauth-provider/dist/oauth-provider.js:3564, the
+// completeAuthorization implementation), which stops a redirect-URI swap against
+// someone else's client but does nothing against a client an attacker registered
+// themselves — that check passes trivially since the attacker controls both sides.
+// This allowlist is the actual boundary: only Claude's documented callback may ever
+// receive a code. Source: https://claude.com/docs/connectors/building/authentication
+// ("Callback URLs" — hosted Claude surfaces register
+// https://claude.ai/api/mcp/auth_callback). Claude Code's RFC 8252 loopback callback
+// is not in this set — not used against this server yet; add it deliberately if that
+// changes, not as a wildcard.
+const ALLOWED_REDIRECT_URIS = new Set(["https://claude.ai/api/mcp/auth_callback"]);
+
 function escapeHtml(s: string): string {
   return s
     .replace(/&/g, "&amp;")
@@ -31,7 +46,7 @@ function renderForm(clientName: string, encodedState: string, error?: string): s
     <p><strong>${escapeHtml(clientName)}</strong> is requesting access to your Ankie deck.</p>
     ${error ? `<p class="error">${escapeHtml(error)}</p>` : ""}
     <form method="POST">
-      <input type="hidden" name="state" value="${encodedState}" />
+      <input type="hidden" name="state" value="${escapeHtml(encodedState)}" />
       <input type="password" name="password" placeholder="Password" autofocus required />
       <button type="submit">Authorize</button>
     </form>
@@ -54,6 +69,11 @@ export async function handleAuthorize(request: Request, env: Env): Promise<Respo
     }
     if (!oauthReqInfo.clientId) {
       return new Response("Invalid authorization request: missing client_id", { status: 400 });
+    }
+    if (!ALLOWED_REDIRECT_URIS.has(oauthReqInfo.redirectUri)) {
+      return new Response("Invalid authorization request: redirect URI is not allowed", {
+        status: 400,
+      });
     }
 
     const client = await env.OAUTH_PROVIDER.lookupClient(oauthReqInfo.clientId);
@@ -85,6 +105,19 @@ export async function handleAuthorize(request: Request, env: Env): Promise<Respo
     if (!oauthReqInfo?.clientId) {
       return new Response("Invalid state", { status: 400 });
     }
+    if (!ALLOWED_REDIRECT_URIS.has(oauthReqInfo.redirectUri)) {
+      return new Response("Invalid authorization request: redirect URI is not allowed", {
+        status: 400,
+      });
+    }
+
+    // Re-look up the client rather than trusting the round-tripped state for anything the
+    // provider can re-derive — the state blob is client-supplied and unsigned.
+    const client = await env.OAUTH_PROVIDER.lookupClient(oauthReqInfo.clientId);
+    if (!client) {
+      return new Response("Invalid authorization request: unknown client", { status: 400 });
+    }
+    const clientName = client.clientName ?? oauthReqInfo.clientId;
 
     const passwordOk =
       typeof password === "string" && password.length > 0
@@ -92,8 +125,6 @@ export async function handleAuthorize(request: Request, env: Env): Promise<Respo
         : false;
 
     if (!passwordOk) {
-      const client = await env.OAUTH_PROVIDER.lookupClient(oauthReqInfo.clientId);
-      const clientName = client?.clientName ?? oauthReqInfo.clientId;
       return new Response(renderForm(clientName, encodedState, "Incorrect password."), {
         status: 401,
         headers: { "content-type": "text/html; charset=utf-8" },
