@@ -25,6 +25,20 @@ governs every write, not a replacement for them.
    Eliott rather than attempting a third. Only blocking findings force a revision; note findings
    are reported to Eliott and left for him to decide.
 
+## Secrets
+
+**Never print a secret value — not in a report, a commit message, a log line, or test output.**
+Say "set" or "rotated" and stop. A value that appears in a chat transcript is burned and has to
+be rotated. Read secrets from where they live (`apps/worker/.dev.vars` locally, `wrangler secret`
+in production), never from an earlier message in the session — assume anything you saw earlier
+is already stale. In shell, reach a secret through a subshell (`$(grep '^NAME=' .dev.vars | ...)`)
+so the value is never in the command text either.
+
+**An unset secret fails loudly, never quietly becomes a weak one.** `env.AUTH_PASSWORD` undefined
+reaches `TextEncoder` as the literal string `"undefined"` and that becomes the password. Every
+handler that compares against a secret throws at the top when it is missing or empty
+(`apps/worker/src/oauth/authorize.ts`, `apps/worker/src/auth/apiSecret.ts`).
+
 ## Dependency ledger
 
 Every dependency in the workspace, and why it's here. Update this list in the same commit that

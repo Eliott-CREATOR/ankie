@@ -22,6 +22,7 @@ export interface SenseRow {
   domain: string | null;
   collocations: string | null; // JSON array, as text
   confusable_with: string | null; // JSON array, as text
+  examples: string | null; // JSON array, as text (0004_sense_examples.sql)
   source_context: string;
   source_conversation: string | null;
   enrichment_status: string;

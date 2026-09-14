@@ -1,0 +1,68 @@
+import { describe, expect, it } from "vitest";
+import { parseWordsCsv, parseWordsJson } from "./payload.js";
+
+describe("parseWordsJson", () => {
+  it("accepts a bare {term, context_sentence}", () => {
+    const result = parseWordsJson({ words: [{ term: "wary", context_sentence: "Be wary." }] });
+    expect(result).toEqual({
+      ok: true,
+      words: [{ term: "wary", context_sentence: "Be wary." }],
+    });
+  });
+
+  it("rejects a word with no context sentence, naming the field", () => {
+    const result = parseWordsJson({ words: [{ term: "wary" }] });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain("context_sentence");
+    }
+  });
+
+  it("rejects an empty words array and a non-object body", () => {
+    expect(parseWordsJson({ words: [] }).ok).toBe(false);
+    expect(parseWordsJson("nope").ok).toBe(false);
+  });
+
+  it("lowercases language and rejects a non-ISO code", () => {
+    const ok = parseWordsJson({ words: [{ term: "a", context_sentence: "b", language: "EN" }] });
+    expect(ok.ok && ok.words[0]?.language).toBe("en");
+    expect(
+      parseWordsJson({ words: [{ term: "a", context_sentence: "b", language: "english" }] }).ok,
+    ).toBe(false);
+  });
+});
+
+describe("parseWordsCsv", () => {
+  it("imports the seed-words.csv column names", () => {
+    const text =
+      "word,pos,translation_fr,example_sentence,domain,register\n" +
+      'wary,adj,"Méfiant","Be wary of that.",finance,formal\n';
+    expect(parseWordsCsv(text)).toEqual({
+      ok: true,
+      words: [
+        {
+          term: "wary",
+          context_sentence: "Be wary of that.",
+          gloss_l1: "Méfiant",
+          domain: "finance",
+          register: "formal",
+        },
+      ],
+    });
+  });
+
+  it("splits list columns on | and drops empty cells", () => {
+    const text = "term,context_sentence,examples,collocations\nwary,Be wary.,One.|Two.,\n";
+    const result = parseWordsCsv(text);
+    expect(result.ok && result.words[0]).toEqual({
+      term: "wary",
+      context_sentence: "Be wary.",
+      examples: ["One.", "Two."],
+    });
+  });
+
+  it("reports a row missing its required columns", () => {
+    const result = parseWordsCsv("term,context_sentence\nwary,\n");
+    expect(result.ok).toBe(false);
+  });
+});

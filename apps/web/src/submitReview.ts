@@ -1,3 +1,5 @@
+import { apiHeaders } from "./apiSecret.js";
+
 export interface ReviewSubmission {
   id: string;
   cardId: string;
@@ -15,7 +17,7 @@ export async function submitReview(submission: ReviewSubmission): Promise<Submit
   try {
     const res = await fetch("/api/review", {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", ...apiHeaders() },
       body: JSON.stringify(submission),
     });
     if (res.ok) {

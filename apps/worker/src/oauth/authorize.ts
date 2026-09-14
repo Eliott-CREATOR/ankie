@@ -57,6 +57,12 @@ function renderForm(clientName: string, encodedState: string, error?: string): s
 // One-shot, per authorization — no cookie, no session, no expiry (docs/spec.md §5.1). This must
 // not grow into a session system; that isn't its job.
 export async function handleAuthorize(request: Request, env: Env): Promise<Response> {
+  // An unset secret must fail loudly, not quietly become a weak one: env.AUTH_PASSWORD undefined
+  // would reach TextEncoder as the literal string "undefined" and become the password.
+  if (!env.AUTH_PASSWORD) {
+    throw new Error("AUTH_PASSWORD secret is not set or is empty — refusing to serve /authorize");
+  }
+
   if (request.method === "GET") {
     let oauthReqInfo: AuthRequest;
     try {
