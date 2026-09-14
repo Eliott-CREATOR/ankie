@@ -29,7 +29,7 @@ const repoRoot = path.resolve(here, "../../..");
 const csvPath = path.join(repoRoot, "data/seed-words.csv");
 const outPath = path.join(here, "seed-generated.sql");
 
-function parseCsv(text) {
+export function parseCsv(text) {
   const rows = [];
   let row = [];
   let field = "";
@@ -85,7 +85,7 @@ function parseCsv(text) {
   return rows.filter((r) => r.length > 1 || r[0] !== "");
 }
 
-function deterministicId(prefix, ...parts) {
+export function deterministicId(prefix, ...parts) {
   // Joined with a plain separator, not concatenated bare or with a \u escape —
   // "en"+"cat" vs "enc"+"at" must not hash the same, and a raw control byte here
   // (which is what \u0001 silently became the first time this was written) is a landmine
@@ -94,56 +94,69 @@ function deterministicId(prefix, ...parts) {
   return `${prefix}_${hash}`;
 }
 
-function sqlValue(value) {
+export function sqlValue(value) {
   if (value === null || value === undefined || value === "") {
     return "NULL";
   }
   return `'${String(value).replace(/'/g, "''")}'`;
 }
 
-const csvText = readFileSync(csvPath, "utf8");
-const rows = parseCsv(csvText);
-const header = rows[0];
-if (!header) {
-  throw new Error("seed-words.csv is empty");
+// Pure: turns CSV text into the INSERT OR IGNORE statements, no file I/O. Exported so tests can
+// exercise the real row-building logic (definition_l2 included) against an in-memory database,
+// instead of re-deriving it separately and risking the two copies drifting apart.
+export function buildStatements(csvText, now = Date.now()) {
+  const rows = parseCsv(csvText);
+  const header = rows[0];
+  if (!header) {
+    throw new Error("seed-words.csv is empty");
+  }
+  const dataRows = rows.slice(1);
+
+  const languageCode = "en";
+  const statements = [];
+
+  for (const cols of dataRows) {
+    const record = Object.fromEntries(header.map((h, idx) => [h, cols[idx] ?? ""]));
+    const lemma = record.word ?? "";
+    const lemmaNorm = normalizeLemma(lemma);
+    const pos = record.pos ?? "";
+
+    const lexemeId = deterministicId("lex", languageCode, lemmaNorm, pos);
+    const senseId = deterministicId("sen", lexemeId, "0");
+    const cardId = deterministicId("crd", senseId, "recognition");
+
+    statements.push(
+      `INSERT OR IGNORE INTO lexemes (id, language_code, lemma, lemma_norm, pos, ipa, frequency_band, created_at) VALUES (${sqlValue(lexemeId)}, ${sqlValue(languageCode)}, ${sqlValue(lemma)}, ${sqlValue(lemmaNorm)}, ${sqlValue(pos)}, NULL, NULL, ${now});`,
+    );
+
+    statements.push(
+      `INSERT OR IGNORE INTO senses (id, lexeme_id, sense_index, gloss_l1, definition_l2, register, domain, collocations, confusable_with, source_context, source_conversation, enrichment_status, created_at) VALUES (${sqlValue(senseId)}, ${sqlValue(lexemeId)}, 0, ${sqlValue(record.translation_fr)}, ${sqlValue(record.definition_l2)}, ${sqlValue(record.register)}, ${sqlValue(record.domain)}, NULL, NULL, ${sqlValue(record.example_sentence)}, NULL, 'complete', ${now});`,
+    );
+
+    // Same materializer as the Worker's ingest path — the card shape has exactly one source.
+    const { front, back } = materializeCard({
+      term: lemma,
+      context_sentence: record.example_sentence,
+      gloss_l1: record.translation_fr || null,
+      definition_l2: record.definition_l2 || null,
+      examples: null,
+    });
+
+    statements.push(
+      `INSERT OR IGNORE INTO cards (id, sense_id, atom_type, front, back, state, unlock_after_card, unlock_min_stability, due, stability, difficulty, elapsed_days, scheduled_days, reps, lapses, last_review, updated_at) VALUES (${sqlValue(cardId)}, ${sqlValue(senseId)}, 'recognition', ${sqlValue(front)}, ${sqlValue(back)}, 'new', NULL, NULL, NULL, NULL, NULL, 0, 0, 0, 0, NULL, ${now});`,
+    );
+  }
+
+  return { statements, wordCount: dataRows.length };
 }
-const dataRows = rows.slice(1);
 
-const now = Date.now();
-const languageCode = "en";
-const statements = [];
-
-for (const cols of dataRows) {
-  const record = Object.fromEntries(header.map((h, idx) => [h, cols[idx] ?? ""]));
-  const lemma = record.word ?? "";
-  const lemmaNorm = normalizeLemma(lemma);
-  const pos = record.pos ?? "";
-
-  const lexemeId = deterministicId("lex", languageCode, lemmaNorm, pos);
-  const senseId = deterministicId("sen", lexemeId, "0");
-  const cardId = deterministicId("crd", senseId, "recognition");
-
-  statements.push(
-    `INSERT OR IGNORE INTO lexemes (id, language_code, lemma, lemma_norm, pos, ipa, frequency_band, created_at) VALUES (${sqlValue(lexemeId)}, ${sqlValue(languageCode)}, ${sqlValue(lemma)}, ${sqlValue(lemmaNorm)}, ${sqlValue(pos)}, NULL, NULL, ${now});`,
-  );
-
-  statements.push(
-    `INSERT OR IGNORE INTO senses (id, lexeme_id, sense_index, gloss_l1, definition_l2, register, domain, collocations, confusable_with, source_context, source_conversation, enrichment_status, created_at) VALUES (${sqlValue(senseId)}, ${sqlValue(lexemeId)}, 0, ${sqlValue(record.translation_fr)}, ${sqlValue(record.definition_l2)}, ${sqlValue(record.register)}, ${sqlValue(record.domain)}, NULL, NULL, ${sqlValue(record.example_sentence)}, NULL, 'complete', ${now});`,
-  );
-
-  // Same materializer as the Worker's ingest path — the card shape has exactly one source.
-  const { front, back } = materializeCard({
-    term: lemma,
-    context_sentence: record.example_sentence,
-    gloss_l1: record.translation_fr || null,
-    definition_l2: null,
-    examples: null,
-  });
-
-  statements.push(
-    `INSERT OR IGNORE INTO cards (id, sense_id, atom_type, front, back, state, unlock_after_card, unlock_min_stability, due, stability, difficulty, elapsed_days, scheduled_days, reps, lapses, last_review, updated_at) VALUES (${sqlValue(cardId)}, ${sqlValue(senseId)}, 'recognition', ${sqlValue(front)}, ${sqlValue(back)}, 'new', NULL, NULL, NULL, NULL, NULL, 0, 0, 0, 0, NULL, ${now});`,
-  );
+function main() {
+  const csvText = readFileSync(csvPath, "utf8");
+  const { statements, wordCount } = buildStatements(csvText);
+  writeFileSync(outPath, `${statements.join("\n")}\n`);
+  console.log(`Wrote ${statements.length} statements (${wordCount} words) to ${outPath}`);
 }
 
-writeFileSync(outPath, `${statements.join("\n")}\n`);
-console.log(`Wrote ${statements.length} statements (${dataRows.length} words) to ${outPath}`);
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  main();
+}
