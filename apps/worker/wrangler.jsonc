@@ -14,5 +14,11 @@
       "database_name": "ankie",
       "database_id": "e66bfc39-2372-4d15-a52c-8539b3ac196c"
     }
+  ],
+  "kv_namespaces": [
+    {
+      "binding": "OAUTH_KV",
+      "id": "b715290613d94b1cae93e6f46ec40ed1"
+    }
   ]
 }

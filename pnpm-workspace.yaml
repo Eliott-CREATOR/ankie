@@ -3,5 +3,11 @@ packages:
   - "packages/*"
 allowBuilds:
   '@biomejs/biome': true
+  core-js-pure: true
   esbuild: true
   workerd: true
+overrides:
+  # zod@latest resolves to a build published <24h before this session, tripping pnpm's
+  # minimum-release-age policy as a transitive dep even though our own pin is older —
+  # forced to a settled version across the whole tree. See CLAUDE.md's dependency ledger.
+  zod: 4.5.4
