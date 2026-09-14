@@ -274,7 +274,83 @@ write, or move `front`/`back` construction to read time (a join per `/api/due` c
 single-round-trip property for correctness-by-construction). Don't default to the C1 pattern
 without weighing that trade explicitly.
 
-**Auth:** Cloudflare Access (free, ≤50 users) in front of the Worker. Never expose an unauthenticated MCP endpoint — anyone who found the URL could write to the deck.
+### 5.1 Auth — two secrets, two mechanisms, no shared session
+
+The spec's original plan (§0: "Auth: Cloudflare Access") turned out not to be buildable on the
+current deployment. The PWA and the MCP connector are different kinds of caller and end up with
+different auth, deliberately not unified — routing both through one mechanism was tried first and
+rejected below, not skipped.
+
+**MCP (`/mcp`) — OAuth via `@cloudflare/workers-oauth-provider` (Dynamic Client Registration).**
+Claude's simpler `static_headers` (a fixed bearer header, no OAuth) is not available on this
+account — verified against Anthropic's own test: "If you don't see the Request headers section in
+the Add custom connector dialog, your organization doesn't have access yet." The Add dialog here
+goes Name → MCP server URL → a server check → "Continue anyway," with no Request Headers section
+at any step. OAuth isn't the more-thorough option here; it's the only one Claude's connector will
+actually run.
+
+The library owns `/token`, `/register`, and PKCE (S256, enforced for public clients), and stores
+tokens hashed. Ankie supplies two things: `defaultHandler` (the `/authorize` login/consent UI) and
+`apiRoute`/`apiHandler` (`/mcp` itself). The login at `/authorize` is a single password field
+compared against a Worker secret via SHA-256 digest comparison — one-shot, per authorization, no
+cookie, no session, no expiry. **This must not grow into a session system** — that isn't its job.
+
+Requires a KV namespace bound as `OAUTH_KV` for token storage. Checked against §0's zero-cost
+constraint before choosing this: KV is on the Workers free plan (100,000 reads/day, 1,000
+writes/day, 1GB, no payment method) — §0 holds.
+
+**PWA (`/api/*`) — a separate secret, header-checked, not routed through the OAuth server.**
+Entered once, held in `localStorage`, sent as a header on every `/api/*` request, checked with the
+same SHA-256 digest-comparison helper as the MCP login. Deliberately decoupled from the OAuth
+authorization server: the PWA is a browser Ankie controls and needs no token exchange, and
+coupling it would make every PWA change a change to the auth surface. Two call sites for the
+comparison helper — two duplications, not three, so no shared abstraction yet (rule 1).
+
+**Rejected, in the order they were tried:**
+
+- **Cloudflare Access.** Self-hosted Access Applications require "an active zone in your
+  Cloudflare account" — `ankie-worker.eliottmusy.workers.dev` is Cloudflare's zone, not ours. The
+  only Access mode that reaches a workers.dev-only deployment at all is "Protect a Worker," which
+  gates the *entire* Worker with no path exception — that would gate `/mcp` along with the PWA.
+  Fixable with a custom domain, but that's a recurring cost against the hard €0 constraint in §0,
+  so it wasn't pursued further.
+- **Cloudflare Access Service Tokens.** Hits the same zone wall as Access itself — moot regardless
+  of the next problem: its two headers (`CF-Access-Client-Id`, `CF-Access-Client-Secret`) aren't
+  in Claude's three pre-approved header names (`authorization`, `x-api-key`, `x-auth-token`), so
+  using them would mean waiting on Anthropic's custom-header review before the connector could
+  even be saved.
+- **`static_headers`.** Claude's simplest supported option, and confirmed not available on this
+  account (see above).
+
+**Two honest limitations, accepted rather than solved:**
+
+- The app shell (the static PWA HTML/JS/CSS) stays publicly readable — only `/api/*` is
+  header-gated. Anyone with the URL can load the shell; they can't reach any data without the
+  secret.
+- The PWA's secret lives in `localStorage`, readable by any script that achieves XSS on the page.
+  Accepted for a single-user personal tool; revisit if that ever stops being true.
+
+**Implementation details that fail silently if missed** (from Anthropic's connector docs):
+
+- Every auth-required response is `401` with a `WWW-Authenticate: Bearer resource_metadata="…"`
+  header pointing at the protected resource metadata document. Claude does not honor that header
+  on a `200`.
+- The protected resource metadata's `resource` field must match the MCP URL exactly as entered in
+  Claude, path included: `https://ankie-worker.eliottmusy.workers.dev/mcp`.
+- `/.well-known/*` must actually reach the Worker script. It does today because C0 left
+  `not_found_handling` unset on the assets binding (`CLAUDE.md`, "Deployment architecture") — do
+  not change that to serve the SPA shell for unmatched paths, or OAuth discovery breaks silently.
+- `/token` accepts `application/x-www-form-urlencoded`; `/register` accepts `application/json` —
+  different parsers, don't assume one covers both.
+- Refresh tokens rotate for public clients; a dead refresh token returns `invalid_grant`, not
+  `invalid_request`.
+- Discovery, registration and token endpoints get a 10-second budget from Claude; refresh gets 30.
+
+**Dropped:** a `cf-connecting-ip` check against Anthropic's published egress range
+(`160.79.104.0/21`) as a second factor on `/mcp`. That only earns its keep when the path has no
+auth of its own to fall back on — OAuth removes that condition, so it isn't built.
+
+Never expose an unauthenticated MCP endpoint — anyone who found the URL could write to the deck.
 
 **Reference reading before designing the tools:** the existing Anki MCP servers ([nailuoGG](https://github.com/nailuoGG/anki-mcp-server), [CamdenClark](https://github.com/CamdenClark/anki-mcp-server), [ankimcp](https://github.com/ankimcp/anki-mcp-server)) all route through AnkiConnect and therefore need Anki desktop running — useless for phone-first — but their tool naming and argument shapes are a free design review.
 
