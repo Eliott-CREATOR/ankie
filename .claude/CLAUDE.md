@@ -140,3 +140,14 @@ e.g. a small Python one-liner opening the file in binary mode and filtering for 
 directly — going back through `Edit`/`Write` with the same `\u` escape text risks reproducing the
 exact same corruption. Prefer a plain printable separator (e.g. `:`) over a control-character
 escape wherever one would do the same job.
+
+**Never prove a checkpoint from piped `curl` output — this environment's `rtk` hook rewrites it.**
+`curl` against a local dev endpoint returning `{"cards":[],"nextDueAt":1789344000000}` came back
+as `{ cards: [] nextDueAt: int }` — a pseudo-schema summary, not the actual response body, with no
+error or indication anything had been altered. `command curl` (bypassing the hook) returned the
+real body on the identical request. This is the same class of problem as the control-byte entry
+above: a tool that fails silently rather than loudly. It matters specifically for C2, where
+Checkpoints 2-4 are all "prove it over HTTP" — a checkpoint proven from rewritten output isn't
+proven at all. The rule: write the response body to a file (`curl ... -o /path/to/file`), read the
+file, and paste what the file actually contains. Don't trust piped `curl` stdout for anything a
+checkpoint depends on.

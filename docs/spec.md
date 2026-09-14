@@ -34,7 +34,7 @@ Always-on **and** free **and** reachable by Claude's MCP eliminates most hosts: 
 | Workers (API + MCP) | 100,000 req/day, always-on at the edge | ~500/day |
 | D1 (SQLite) | 5 GB, 5M row reads/day, 100k row writes/day | ~600 writes/day |
 | Pages (PWA) | unlimited requests | trivial |
-| Access (auth) | free up to 50 users | 1 user |
+| Auth (OAuth + header secret, §5.1) | KV free plan: 100k reads/day, 1k writes/day, 1GB, no payment method | 1 user |
 
 Headroom is roughly 100×. Cloudflare also ships a first-class remote MCP template (`createMcpHandler`, Streamable HTTP) that registers directly as a Claude custom connector.
 
@@ -77,7 +77,7 @@ The earlier draft had spaCy, `wordfreq` and bge-m3 embeddings server-side. All r
    │  Cloudflare Worker      (free tier)    │
    │  · remote MCP server (createMcpHandler)│
    │  · REST API for the PWA                │
-   │  · behind Cloudflare Access            │
+   │  · OAuth (/mcp) + header secret (/api) │
    └───────────────┬────────────────────────┘
                    │  D1 (SQLite)
                    ▼
@@ -276,8 +276,8 @@ without weighing that trade explicitly.
 
 ### 5.1 Auth — two secrets, two mechanisms, no shared session
 
-The spec's original plan (§0: "Auth: Cloudflare Access") turned out not to be buildable on the
-current deployment. The PWA and the MCP connector are different kinds of caller and end up with
+The spec's original plan — §0's `Access (auth) | free up to 50 users | 1 user` row — turned out
+not to be buildable on the current deployment. The PWA and the MCP connector are different kinds of caller and end up with
 different auth, deliberately not unified — routing both through one mechanism was tried first and
 rejected below, not skipped.
 
@@ -433,7 +433,7 @@ Each ends at a gate Eliott validates before the next begins.
 **C1 — Review loop, online only.** `ts-fsrs`, card/review endpoints, minimal review UI, seeded with ~50 real words from his English notes.
 *Gate: 20 real reviews on the phone. **This must land within days** — an unused app is the main risk, not a technical one.*
 
-**C2 — MCP ingest.** Remote MCP server on the same Worker, `ankie_add_words`, dedup, Cloudflare Access, registered as a claude.ai custom connector.
+**C2 — MCP ingest.** Remote MCP server on the same Worker, `ankie_add_words`, dedup, OAuth on `/mcp` + a header secret on `/api/*` (§5.1), registered as a claude.ai custom connector.
 *Gate: a word taught in a Claude chat appears in the queue with no action from him.*
 
 **C3 — Card atoms.** Recognition / cloze / collocation, production gate, `speechSynthesis` audio, static frequency list.
@@ -478,7 +478,7 @@ The schema is language-agnostic, so Mandarin costs a config row and one card-ato
 | Card quality drifts per conversation | Medium | The Skill is the single source of card style — no improvising. |
 | Learning curve on Workers/D1 | Medium | C0 is deliberately a deployment-only chantier: get the boring parts working before any logic exists. |
 | Scope creep | Medium | Section 11 is a contract, not a wishlist. |
-| Unauthenticated MCP endpoint | Low but severe | Cloudflare Access from C2. Never ship the public template as-is. |
+| Unauthenticated MCP endpoint | Low but severe | OAuth (DCR) on `/mcp` from C2, plus a header secret on `/api/*` — §5.1. Never ship the public template as-is. |
 
 ---
 
