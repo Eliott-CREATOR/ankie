@@ -232,47 +232,99 @@ CREATE TABLE ingest_log (
 
 Thin payload by design — demanding fourteen perfect columns from every chat is the friction being removed.
 
+The MCP endpoint is mounted at `/mcp` — a single stateless HTTP handler (`agents`'s
+`createMcpHandler`, wrapped in `apps/worker/src/mcp/server.ts`) that `OAuthProvider` dispatches to
+as `apiRoute` once a request carries a valid bearer token. It rebuilds the `McpServer` per request
+with `env` closed over rather than holding any server-side state between calls — see §5.1 for the
+auth in front of it.
+
+Five tools are registered as of C2 Checkpoint 4 (`3efa757`), all confirmed live against the
+claude.ai connector:
+
+```ts
+ankie_ping()
+→ { pong: true, at: string }  // ISO timestamp
+```
+
+No input. Confirms the server is reachable and the token is valid.
+
 ```ts
 ankie_add_words({ words: [{
-  term:             string    // required
-  context_sentence: string    // required — where he met it
-  language?:        string    // default 'en'
-  gloss_l1?:        string
-  definition_l2?:   string
-  examples?:        string[]
-  collocations?:    string[]
-  register?:        string
-  domain?:          string
-  confusable_with?: string[]
-}]})
-→ { added, duplicates_skipped, needs_enrichment: string[] }
+  term:             string    // required, 1-200 chars, trimmed, internal whitespace collapsed
+  context_sentence: string    // required, 1-2000 chars, trimmed — where he met it
+  language?:        string    // ISO 639 code e.g. 'en'; defaults to 'en' when omitted
+  gloss_l1?:        string    // ≤2000 chars
+  definition_l2?:   string    // ≤2000 chars
+  examples?:        string[]  // ≤50 items, each ≤500 chars
+  collocations?:    string[]  // same limits as examples
+  register?:        string    // ≤100 chars
+  domain?:          string    // ≤100 chars
+  confusable_with?: string[]  // same limits as examples
+}] })  // 1-200 words per call
+→ { added: number, duplicates_skipped: number, needs_enrichment: string[] }
 ```
 
-A bare `{term, context_sentence}` is accepted and stored `enrichment_status='needs_enrichment'`.
+A bare `{term, context_sentence}` is accepted and stored `enrichment_status='needs_enrichment'` —
+`needs_enrichment` in the response lists the *terms* missing `gloss_l1` or `definition_l2`, not
+sense ids. Deduplication is per `(language, lemma_norm)`: a term already present — from the seed,
+an earlier call, or earlier in the same call — adds no second lexeme/sense/card and is counted in
+`duplicates_skipped`, not treated as an error. An unrecognized `language` code fails the whole call
+(`isError: true`, nothing inserted) rather than silently dropping just those words.
+
+`POST /api/ingest` is the bulk-import twin of this tool, not a separate contract: it accepts either
+the identical JSON body (`{ words: [...] }`) or `text/csv` mapped onto the same fields (accepting
+both this schema's names and `data/seed-words.csv`'s, e.g. `word`→`term`,
+`translation_fr`→`gloss_l1`, `|`-separated lists), validates through the same schema
+(`apps/worker/src/ingest/payload.ts`) and writes through the same function
+(`ingestWords.ts`), returning the identical `{ added, duplicates_skipped, needs_enrichment }` body
+on success or `{ error: string }` at `400` (bad payload) or `500` (write failure). It is
+header-gated by `API_SECRET`, not OAuth — see §5.1.
 
 ```ts
-ankie_get_due_summary()              // "23 due, 7 leeches"
-ankie_get_leeches(limit)             // words that keep failing
-ankie_get_pending_enrichment(limit)  // cards missing content
-ankie_enrich(sense_id, fields)       // fill them
-ankie_log_production(word, sentence, verdict, notes)  // the training section, later
+ankie_get_due_summary()
+→ { due: number, new: number, pending_enrichment: number }
 ```
 
-`ankie_get_leeches` **is the point of the whole system.** The app names what is not sticking; Claude re-teaches it from a different angle and pushes a replacement card. Anki suspends a leech and forgets about it.
+True backlog totals, not capped by the day's remaining `daily_new_limit`/`daily_review_limit` the
+way `GET /api/due`'s queue is.
 
-**`ankie_enrich` will hit a real trap here.** `cards.front`/`cards.back` are materialized JSON
-snapshots taken at write time (`apps/worker/scripts/seed.mjs` in C1), not a live join against
+```ts
+ankie_get_pending_enrichment(limit?: number)  // 1-100, default 20
+→ [{ sense_id: string, term: string, context_sentence: string }]  // oldest first
+```
+
+```ts
+ankie_enrich(sense_id: string, fields: {
+  gloss_l1?, definition_l2?, examples?, collocations?, register?, domain?, confusable_with?
+  // same shapes/limits as ankie_add_words; at least one field required
+})
+→ { sense_id: string, enrichment_status: 'complete' | 'needs_enrichment', card: { front: string, back: string } }
+```
+
+Fields the caller supplies replace the current value; fields left out are untouched — this tops up
+missing content, it doesn't reset what's already there. An unknown `sense_id`, or a sense with no
+recognition card to update, returns `isError: true` rather than a silent no-op.
+
+**Not built:** `ankie_get_leeches` and `ankie_log_production`, both named in an earlier draft of
+this spec, are not registered tools as of C2. `ankie_get_leeches` — the point of the whole system,
+naming what is not sticking so Claude can re-teach it from a different angle and push a
+replacement card — has no implementation yet: nothing in the current schema tracks a lapse streak
+or a "replacement card" concept. `ankie_log_production` (the training-section tool) is later work
+per the original plan. Both remain the intended design, not part of the tool surface this document
+is certifying as built today.
+
+**`ankie_enrich`'s materialization trap was decided at C2, not left open.** `cards.front`/`cards.back`
+are materialized JSON snapshots (`packages/core`'s `materializeCard`), not a live join against
 `senses` — the API serves them directly, with no per-request join, which is exactly what makes
 `GET /api/due` a single round trip. C1 discovered the cost of that the hard way: a migration
 updated `senses.definition_l2` but left the stale value baked into `cards.back`, and it took a
-second migration (`0003_refresh_card_back_definitions.sql`) to fix. `ankie_enrich` changes
-`senses` content the same way — any field it touches that also appears in a card's `front`/`back`
-must refresh both the sense row and every card materialized from it, or the API will keep serving
-stale content indefinitely with no error to surface the drift.
-**Decide at C2, not now:** either make enrichment always re-materialize affected cards in the same
-write, or move `front`/`back` construction to read time (a join per `/api/due` call, trading the
-single-round-trip property for correctness-by-construction). Don't default to the C1 pattern
-without weighing that trade explicitly.
+second migration (`0003_refresh_card_back_definitions.sql`) to fix. C2 closed that gap for
+enrichment rather than moving to read-time joins: `ankie_enrich` (`apps/worker/src/ingest/enrich.ts`)
+always re-materializes the sense's recognition card in the same `db.batch()` write as the sense
+update — one transaction, not a follow-up migration. If that batch ever updates zero or more than
+one card for a sense, the tool returns an error instead of a silent success that never actually
+refreshed the card. `GET /api/due` keeps its single-round-trip property; the read-time-join
+alternative this spec once weighed was not built.
 
 ### 5.1 Auth — two secrets, two mechanisms, no shared session
 
@@ -290,21 +342,51 @@ at any step. OAuth isn't the more-thorough option here; it's the only one Claude
 actually run.
 
 The library owns `/token`, `/register`, and PKCE (S256, enforced for public clients), and stores
-tokens hashed. Ankie supplies two things: `defaultHandler` (the `/authorize` login/consent UI) and
-`apiRoute`/`apiHandler` (`/mcp` itself). The login at `/authorize` is a single password field
-compared against a Worker secret via SHA-256 digest comparison — one-shot, per authorization, no
-cookie, no session, no expiry. **This must not grow into a session system** — that isn't its job.
+tokens hashed in `OAUTH_KV`. `/register` (DCR) is intentionally open — anyone can register a client
+with any name and redirect URI. That is not the security boundary: `apps/worker/src/oauth/authorize.ts`
+holds a hardcoded allowlist of exactly one `redirectUri`, Claude's documented callback
+(`https://claude.ai/api/mcp/auth_callback`), checked on both the `GET` (initial request) and `POST`
+(after the password form submits) legs of `/authorize` — a self-registered client with a different
+callback is refused before the password prompt ever renders, regardless of what it registered.
+
+Ankie supplies two things to the library: `defaultHandler` (the `/authorize` login/consent UI) and
+`apiRoute`/`apiHandler` (`/mcp` itself). `GET /authorize` renders a single password field; the
+pending `AuthRequest` is base64-JSON-encoded into a hidden form field (`state`) rather than a
+cookie — nothing is stored server-side between the two legs. `POST /authorize` decodes that state,
+re-checks the redirect-URI allowlist, and re-looks-up the client server-side (it does not trust the
+client identity round-tripped in the client-supplied, unsigned `state` blob). The password is then
+compared against the `AUTH_PASSWORD` Worker secret via SHA-256 digest comparison — one-shot, per
+authorization, no cookie, no session, no expiry. A wrong password re-renders the same form with a
+401 and an error message, not a redirect. **This must not grow into a session system** — that isn't
+its job. On success, `OAUTH_PROVIDER.completeAuthorization` issues the code and the library
+redirects to Claude's callback. If `AUTH_PASSWORD` is unset or empty, `/authorize` throws before
+parsing anything, on both `GET` and `POST` — it never falls back to comparing against `undefined`.
 
 Requires a KV namespace bound as `OAUTH_KV` for token storage. Checked against §0's zero-cost
 constraint before choosing this: KV is on the Workers free plan (100,000 reads/day, 1,000
 writes/day, 1GB, no payment method) — §0 holds.
 
 **PWA (`/api/*`) — a separate secret, header-checked, not routed through the OAuth server.**
-Entered once, held in `localStorage`, sent as a header on every `/api/*` request, checked with the
-same SHA-256 digest-comparison helper as the MCP login. Deliberately decoupled from the OAuth
-authorization server: the PWA is a browser Ankie controls and needs no token exchange, and
-coupling it would make every PWA change a change to the auth surface. Two call sites for the
-comparison helper — two duplications, not three, so no shared abstraction yet (rule 1).
+Entered once, held in `localStorage`, sent as the `x-ankie-secret` header on every `/api/*`
+request, checked with the same SHA-256 digest-comparison helper as the MCP login
+(`apps/worker/src/auth/apiSecret.ts`). The check runs in `apps/worker/src/routes/app.ts` before any
+`/api/*` path is routed, so a future route under that prefix is gated automatically rather than by
+remembering to add the check. A missing or wrong header gets a `401 { error: "unauthorized" }`; an
+unset or empty `API_SECRET` throws instead of comparing against `undefined`, on every `/api/*`
+request, the same fail-loud rule as `AUTH_PASSWORD`. Deliberately decoupled from the OAuth
+authorization server: the PWA is a browser Ankie controls and needs no token exchange, and coupling
+it would make every PWA change a change to the auth surface. Two call sites for the comparison
+helper — two duplications, not three, so no shared abstraction yet (rule 1).
+
+**No shared session, route by route:** `/health` and the static app shell (PWA HTML/JS/CSS, served
+by the `ASSETS` binding) are public, no gate. `/authorize`, `/token`, `/register`, and the
+`/.well-known/*` discovery documents are owned by `OAuthProvider` and are themselves the
+unauthenticated entry points OAuth requires — DCR and discovery have to be reachable before a
+client has anything to authenticate with. `/mcp` requires a bearer token from that OAuth flow,
+validated by the library before `ankieMcpApiHandler` ever runs. `/api/due`, `/api/review`, and
+`/api/ingest` require the `x-ankie-secret` header instead, checked independently of the OAuth
+token — a valid MCP bearer token does not grant `/api/*` access, and the `x-ankie-secret` header
+does not grant `/mcp` access. The two mechanisms never consult each other's state.
 
 **Rejected, in the order they were tried:**
 
