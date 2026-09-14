@@ -54,11 +54,21 @@ async function loadExistingKeys(
 // on the parent) rather than plain INSERTs trusted to the lookup above: lexemes' unique index
 // includes pos, which is NULL here, and SQLite treats NULLs as distinct in a unique index — so
 // the index alone would not stop two overlapping calls from creating the same word twice.
+// "mcp:"-prefixed sources are ankie_add_words calls — a word taught in a live Claude conversation
+// (docs/prompts/c2.md's gate). Everything else (api:ingest:csv, api:ingest:json, and the C1 seed
+// script) is a bulk or one-time import, not a conversation. senses.source_conversation records
+// which one this call was, so GET /api/due's new-card ordering can surface conversation-taught
+// words ahead of the seed backlog instead of behind it.
+function isConversationSourced(source: string): boolean {
+  return source.startsWith("mcp:");
+}
+
 export async function ingestWords(
   db: D1Database,
   words: WordInput[],
   source: string,
 ): Promise<IngestOutcome> {
+  const sourceConversation = isConversationSourced(source) ? source : null;
   const known = await db.prepare("SELECT code FROM languages").all<{ code: string }>();
   const knownCodes = new Set(known.results.map((row) => row.code));
 
@@ -118,7 +128,7 @@ export async function ingestWords(
           `INSERT INTO senses (id, lexeme_id, sense_index, gloss_l1, definition_l2, register, domain,
              collocations, confusable_with, examples, source_context, source_conversation,
              enrichment_status, created_at)
-           SELECT ?1, ?2, 0, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, NULL, ?11, ?12
+           SELECT ?1, ?2, 0, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13
            WHERE EXISTS (SELECT 1 FROM lexemes WHERE id = ?2)`,
         )
         .bind(
@@ -132,6 +142,7 @@ export async function ingestWords(
           jsonOrNull(word.confusable_with),
           jsonOrNull(word.examples),
           word.context_sentence,
+          sourceConversation,
           needsEnrichment ? "needs_enrichment" : "complete",
           now,
         ),

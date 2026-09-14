@@ -33,6 +33,31 @@ export const addWordsInputSchema = z.object({
 
 export type WordInput = z.infer<typeof wordInputSchema>;
 
+// ankie_enrich's fields payload (docs/prompts/c2.md Step 4) — the same content fields a word can
+// arrive with, minus term/context_sentence/language: enrich fills in missing descriptive content
+// on an existing sense, it doesn't rewrite what the word is or where it was met. Picked from
+// wordInputSchema rather than redeclared, so the two can't drift on validation rules.
+export const enrichFieldsSchema = wordInputSchema
+  .pick({
+    gloss_l1: true,
+    definition_l2: true,
+    examples: true,
+    collocations: true,
+    register: true,
+    domain: true,
+    confusable_with: true,
+  })
+  .refine((fields) => Object.values(fields).some((v) => v !== undefined), {
+    message: "at least one field is required",
+  });
+
+export const enrichInputSchema = z.object({
+  sense_id: trimmed(100),
+  fields: enrichFieldsSchema,
+});
+
+export type EnrichFields = z.infer<typeof enrichFieldsSchema>;
+
 export type ParsedWords = { ok: true; words: WordInput[] } | { ok: false; error: string };
 
 export function parseWordsJson(body: unknown): ParsedWords {

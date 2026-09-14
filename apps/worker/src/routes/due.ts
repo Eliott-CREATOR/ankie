@@ -71,12 +71,17 @@ export async function handleDue(env: { DB: D1Database }): Promise<Response> {
   // frequency_band values yet (C3's static frequency list) — ordering by it now would be an
   // arbitrary NULL sort. Falling back to insertion order (lexemes.created_at) until that data
   // exists is a real fallback, not a guess at what frequency-band ordering should look like.
+  //
+  // Conversation-sourced words (senses.source_conversation set — see ingestWords.ts) sort ahead
+  // of that fallback rather than behind it. Without this, a word taught in a Claude conversation
+  // lands at the back of the existing new-card backlog by insertion order and can take days to
+  // surface under a 15-card daily_new_limit — the C2 gate depends on it appearing promptly.
   const newCards = await env.DB.prepare(
     `SELECT ${CARD_COLUMNS_QUALIFIED} FROM cards
      JOIN senses ON senses.id = cards.sense_id
      JOIN lexemes ON lexemes.id = senses.lexeme_id
      WHERE cards.state = 'new'
-     ORDER BY lexemes.created_at ASC
+     ORDER BY (senses.source_conversation IS NOT NULL) DESC, lexemes.created_at ASC
      LIMIT ?1`,
   )
     .bind(newSlotsLeft)
@@ -112,4 +117,39 @@ export async function handleDue(env: { DB: D1Database }): Promise<Response> {
   }
 
   return Response.json({ cards, nextDueAt });
+}
+
+export interface DueSummary {
+  due: number;
+  new: number;
+  pending_enrichment: number;
+}
+
+// ankie_get_due_summary (docs/prompts/c2.md Step 4) — true totals, not capped by today's
+// remaining daily_new_limit/daily_review_limit slots the way handleDue's queue is: "23 due" should
+// mean the actual backlog, not what's left to serve in the next few minutes.
+export async function getDueSummary(db: D1Database): Promise<DueSummary> {
+  const now = Date.now();
+
+  const dueRow = await db
+    .prepare(
+      `SELECT COUNT(*) AS n FROM cards
+       WHERE state IN ('review', 'learning', 'relearning') AND due <= ?1`,
+    )
+    .bind(now)
+    .first<{ n: number }>();
+
+  const newRow = await db
+    .prepare("SELECT COUNT(*) AS n FROM cards WHERE state = 'new'")
+    .first<{ n: number }>();
+
+  const pendingRow = await db
+    .prepare("SELECT COUNT(*) AS n FROM senses WHERE enrichment_status = 'needs_enrichment'")
+    .first<{ n: number }>();
+
+  return {
+    due: dueRow?.n ?? 0,
+    new: newRow?.n ?? 0,
+    pending_enrichment: pendingRow?.n ?? 0,
+  };
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseWordsCsv, parseWordsJson } from "./payload.js";
+import { enrichInputSchema, parseWordsCsv, parseWordsJson } from "./payload.js";
 
 describe("parseWordsJson", () => {
   it("accepts a bare {term, context_sentence}", () => {
@@ -71,5 +71,57 @@ describe("parseWordsCsv", () => {
   it("reports a row missing its required columns", () => {
     const result = parseWordsCsv("term,context_sentence\nwary,\n");
     expect(result.ok).toBe(false);
+  });
+});
+
+describe("enrichInputSchema", () => {
+  it("accepts a sense_id with one field", () => {
+    const result = enrichInputSchema.safeParse({
+      sense_id: "s-1",
+      fields: { definition_l2: "A feeling of luck." },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts every enrichable field at once", () => {
+    const result = enrichInputSchema.safeParse({
+      sense_id: "s-1",
+      fields: {
+        gloss_l1: "hasard",
+        definition_l2: "A feeling of luck.",
+        examples: ["Pure serendipity."],
+        collocations: ["by serendipity"],
+        register: "neutral",
+        domain: "academic",
+        confusable_with: ["coincidence"],
+      },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects an empty fields object — nothing to enrich", () => {
+    const result = enrichInputSchema.safeParse({ sense_id: "s-1", fields: {} });
+    expect(result.success).toBe(false);
+  });
+
+  it("strips term, context_sentence, and language — enrich fills content, not identity", () => {
+    const result = enrichInputSchema.safeParse({
+      sense_id: "s-1",
+      fields: { term: "renamed", context_sentence: "different", definition_l2: "kept" },
+    });
+    expect(result.success && result.data.fields).toEqual({ definition_l2: "kept" });
+  });
+
+  it("rejects a fields object containing only non-enrichable keys — nothing survives stripping", () => {
+    const result = enrichInputSchema.safeParse({
+      sense_id: "s-1",
+      fields: { term: "renamed", context_sentence: "different", language: "fr" },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects a missing sense_id", () => {
+    const result = enrichInputSchema.safeParse({ fields: { definition_l2: "x" } });
+    expect(result.success).toBe(false);
   });
 });

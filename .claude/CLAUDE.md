@@ -159,14 +159,23 @@ directly — going back through `Edit`/`Write` with the same `\u` escape text ri
 exact same corruption. Prefer a plain printable separator (e.g. `:`) over a control-character
 escape wherever one would do the same job.
 
-**`rtk` also rewrites `grep` at the top level of a pipeline, and the rewritten output carries a
-decoration prefix (`🔍 1 in 1F:📄 .dev.vars (1):`) on stdout.** In C2 Step 3 the pipeline
-`grep '^API_SECRET=' .dev.vars | cut ... | wrangler secret put API_SECRET` uploaded that prefix
-as part of the secret — `wrangler` reported success, production answered 401 to the correct
-header, and nothing said why. The same `grep` inside a `$(...)` substitution is left alone, which
-is why every `curl -H "x-ankie-secret: $(grep ...)"` in the same session worked. When the bytes
-matter (a secret, a hash, anything compared exactly): use `command grep`, read the file from
-Python, or feed `wrangler secret bulk` a JSON file — never a bare `grep` at the head of a pipe.
+**`rtk` also rewrites `grep` in a pipeline, and the rewritten output carries a decoration prefix
+(`🔍 1 in 1F:📄 .dev.vars (1):`) on stdout — and neither the `command` prefix nor a `$(...)`
+substitution is a reliable way around it.** In C2 Step 3 the pipeline
+`grep '^API_SECRET=' .dev.vars | cut ... | wrangler secret put API_SECRET` uploaded that prefix as
+part of the secret. This was recorded once as "bare `grep` at the head of a pipe is unsafe, but
+`command grep` and `grep` inside `$(...)` are fine" — that turned out to be wrong. In C2 Step 4,
+`AUTH_PASSWORD=$(command grep '^AUTH_PASSWORD=' .dev.vars | command cut -d= -f2)` — `command` on
+both halves, entirely inside a substitution — still decorated the output, and the corrupted value
+was POSTed to `/authorize` in production before the response was checked (harmless here: a
+rejected login, not a leaked secret, but the mechanism is the same one that corrupted a live
+secret in Step 3). Immediately after, a differently-shaped pipeline
+(`command grep -i '^location:' file | command sed ... | command tr ...`) ran clean — so the
+trigger isn't fully characterized, and no combination of flags or quoting is verified safe.
+**The only verified-safe way to get a byte-exact value out of a file is the Read tool, or writing
+a command's output to a file with `-o`/`>` and reading that file** — never a shell pipeline through
+`grep`, whatever prefix or substitution wraps it. This is the same class of problem as the
+control-byte and `curl` entries here: a tool that fails silently rather than loudly.
 
 **Never prove a checkpoint from piped `curl` output — this environment's `rtk` hook rewrites it.**
 `curl` against a local dev endpoint returning `{"cards":[],"nextDueAt":1789344000000}` came back
