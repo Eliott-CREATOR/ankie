@@ -164,6 +164,24 @@ describe("handleAuthorize — non-Latin-1 request input (N3)", () => {
   });
 });
 
+// N2 (reports/T-011.md): request.formData() throws a TypeError on a non-form content type, and
+// nothing caught it — a JSON body on POST /authorize 500'd instead of hitting the existing 4xx path.
+describe("handleAuthorize — POST with a non-form body (N2)", () => {
+  it("returns 400 instead of throwing when the body isn't form data", async () => {
+    const env = stubEnv();
+    const response = await handleAuthorize(
+      new Request("https://ankie.test/authorize", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ state: "x", password: "y" }),
+      }),
+      env,
+    );
+    expect(response.status).toBe(400);
+    expect(await response.text()).toContain("Invalid authorization request");
+  });
+});
+
 // N6 (reports/T-005.md): reject a junk client registration's redirect_uris before the library's
 // KV write, rather than leaving DCR entirely open against the free tier's write budget.
 describe("rejectUnallowedRedirectUri", () => {
@@ -186,12 +204,15 @@ describe("rejectUnallowedRedirectUri", () => {
     expect(result?.code).toBe("invalid_client_metadata");
   });
 
-  it("rejects a registration mixing an allowed and a disallowed redirect_uri", () => {
+  // B1 (reports/T-011.md): claude.ai registering with more than one callback URL must still
+  // succeed — the old every()-based check rejected the whole registration if any entry wasn't
+  // allowlisted, which would have blocked a real re-registration that included a second URI.
+  it("allows a registration whose redirect_uris include the allowlisted URI plus another", () => {
     const result = rejectUnallowedRedirectUri({
       clientMetadata: { redirect_uris: [ALLOWED_URI, DISALLOWED_URI] },
       request,
     });
-    expect(result?.status).toBe(400);
+    expect(result).toBeUndefined();
   });
 
   it("rejects missing or malformed redirect_uris", () => {
@@ -205,5 +226,32 @@ describe("rejectUnallowedRedirectUri", () => {
     expect(
       rejectUnallowedRedirectUri({ clientMetadata: { redirect_uris: [] }, request })?.status,
     ).toBe(400);
+    expect(
+      rejectUnallowedRedirectUri({
+        clientMetadata: { redirect_uris: [123, null] },
+        request,
+      })?.status,
+    ).toBe(400);
+  });
+});
+
+// B1 (reports/T-011.md): a client that registered with two redirect_uris — one allowlisted, one
+// not — must still have /authorize reject a request that carries the non-allowlisted one. The
+// registration filter accepting "at least one allowlisted" must not weaken this per-request check.
+describe("handleAuthorize — redirect URI check survives a multi-URI registration (B1)", () => {
+  it("GET rejects a request whose redirectUri is the non-allowlisted one registered alongside the allowed URI", async () => {
+    const env = stubEnv({
+      parseAuthRequest: async () => authRequest({ redirectUri: DISALLOWED_URI }),
+      lookupClient: async () => ({
+        clientId: "client-1",
+        redirectUris: [ALLOWED_URI, DISALLOWED_URI],
+      }),
+    });
+    const response = await handleAuthorize(
+      new Request("https://ankie.test/authorize?client_id=client-1"),
+      env,
+    );
+    expect(response.status).toBe(400);
+    expect(await response.text()).toContain("redirect URI is not allowed");
   });
 });

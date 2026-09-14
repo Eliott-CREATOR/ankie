@@ -26,24 +26,31 @@ export const ALLOWED_REDIRECT_URIS = new Set(["https://claude.ai/api/mcp/auth_ca
 // package (node_modules/@cloudflare/workers-oauth-provider/dist/oauth-provider.js) that
 // clientRegistrationCallback runs, and can reject, before that KV write: the put is the next
 // statement after the callback returns. Wiring this in apps/worker/src/index.ts rejects any
-// registration whose redirect_uris aren't exactly this allowlist before it ever reaches storage.
-// This doesn't close DCR itself — a script that copies the allowed URI string verbatim still
-// registers a client (docs/spec.md §5.1's residual risk) — it only stops the scripts that don't.
+// registration whose redirect_uris don't include at least one allowlisted URI before it ever
+// reaches storage. This doesn't close DCR itself — a script that copies the allowed URI string
+// verbatim still registers a client (docs/spec.md §5.1's residual risk) — it only stops the
+// scripts that don't.
+//
+// B1 (reports/T-011.md): this used to require every() entry to be allowlisted, which would
+// reject a real claude.ai re-registration outright if it ever sent more than one redirect_uris
+// entry. some() keeps the cost-filter property (a lazy script still has to include the allowed
+// URI) without failing a legitimate multi-URI registration. /authorize's per-request redirectUri
+// check (below) stays the actual security boundary — it isn't weakened by this.
 export function rejectUnallowedRedirectUri(
   options: ClientRegistrationCallbackOptions,
 ): ClientRegistrationCallbackResult | undefined {
   const redirectUris = options.clientMetadata.redirect_uris;
-  const allAllowed =
+  const hasAllowedUri =
     Array.isArray(redirectUris) &&
     redirectUris.length > 0 &&
-    redirectUris.every((uri) => typeof uri === "string" && ALLOWED_REDIRECT_URIS.has(uri));
+    redirectUris.some((uri) => typeof uri === "string" && ALLOWED_REDIRECT_URIS.has(uri));
 
-  if (allAllowed) {
+  if (hasAllowedUri) {
     return undefined;
   }
   return {
     code: "invalid_client_metadata",
-    description: "redirect_uris must be exactly the allowed callback URI(s)",
+    description: "redirect_uris must include the allowed callback URI",
     status: 400,
   };
 }
@@ -143,7 +150,18 @@ export async function handleAuthorize(request: Request, env: Env): Promise<Respo
   }
 
   if (request.method === "POST") {
-    const formData = await request.formData();
+    // N2 (reports/T-011.md): request.formData() throws a TypeError on a non-form content type
+    // (e.g. a JSON body) and nothing caught it, 500ing instead of hitting the 4xx path every
+    // other malformed input on this leg already gets.
+    let formData: FormData;
+    try {
+      formData = await request.formData();
+    } catch (err) {
+      return new Response(
+        `Invalid authorization request: ${err instanceof Error ? err.message : String(err)}`,
+        { status: 400 },
+      );
+    }
     const encodedState = formData.get("state");
     const password = formData.get("password");
 

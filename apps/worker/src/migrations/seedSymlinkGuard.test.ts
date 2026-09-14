@@ -18,6 +18,10 @@ const generatedSql = path.join(path.dirname(seedScript), "seed-generated.sql");
 
 describe("seed.mjs's CLI guard survives a symlinked invocation path (N7)", () => {
   it("runs main() when invoked through a symlink, not just the real path", () => {
+    // N1 (reports/T-011.md): outPath in seed.mjs is fixed, so this test can't redirect the
+    // write — check whether a developer's own seed-generated.sql already existed before
+    // spawning, and only remove the file afterward if this test is the one that created it.
+    const existedBefore = existsSync(generatedSql);
     const tempDir = mkdtempSync(path.join(tmpdir(), "ankie-seed-symlink-"));
     const symlinkPath = path.join(tempDir, "seed-via-symlink.mjs");
     try {
@@ -33,8 +37,8 @@ describe("seed.mjs's CLI guard survives a symlinked invocation path (N7)", () =>
       rmSync(tempDir, { recursive: true, force: true });
       // seed-generated.sql is a gitignored, rebuildable artifact of running the script — this
       // test's only side effect on the real worktree, cleaned up so running the suite doesn't
-      // leave it behind.
-      if (existsSync(generatedSql)) {
+      // leave it behind, but only when it didn't already exist before this test ran.
+      if (!existedBefore && existsSync(generatedSql)) {
         unlinkSync(generatedSql);
       }
     }

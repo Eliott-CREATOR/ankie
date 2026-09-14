@@ -414,9 +414,11 @@ does not grant `/mcp` access. The two mechanisms never consult each other's stat
 - DCR is open — anyone who finds `/register` can register a client, and each registration is an
   `env.OAUTH_KV.put()` against the free tier's 1,000-writes/day budget (Fable N6,
   `reports/T-005.md`). `clientRegistrationCallback` (`apps/worker/src/oauth/authorize.ts`,
-  `rejectUnallowedRedirectUri`) rejects any registration whose `redirect_uris` aren't exactly this
-  allowlist before the KV write happens, which stops a script that doesn't bother imitating
-  Claude's callback. It does not stop one that copies that exact string — the field is
+  `rejectUnallowedRedirectUri`) rejects any registration whose `redirect_uris` don't include at
+  least one allowlisted URI before the KV write happens (Fable B1, `reports/T-011.md` — the
+  original exact-match check would have rejected a legitimate claude.ai re-registration that ever
+  sent more than one callback URL), which stops a script that doesn't bother imitating Claude's
+  callback. It does not stop one that copies that exact string — the field is
   client-supplied and trivially spoofable, so this was never meant to be an identity check, only a
   cost filter on the laziest abuse. Revisit if the write budget is ever actually exhausted.
 
