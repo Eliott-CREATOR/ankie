@@ -20,6 +20,8 @@ import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+// Node strips the types natively (v25, .nvmrc) — no build step, same source the Worker runs.
+import { normalizeLemma } from "../../../packages/core/src/normalize.ts";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, "../../..");
@@ -80,13 +82,6 @@ function parseCsv(text) {
     rows.push(row);
   }
   return rows.filter((r) => r.length > 1 || r[0] !== "");
-}
-
-function normalizeLemma(word) {
-  return word
-    .normalize("NFD")
-    .replace(/\p{Diacritic}/gu, "")
-    .toLowerCase();
 }
 
 function deterministicId(prefix, ...parts) {

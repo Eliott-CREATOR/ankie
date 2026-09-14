@@ -10,6 +10,13 @@ describe("parseWordsJson", () => {
     });
   });
 
+  it("collapses internal whitespace runs in the term", () => {
+    const result = parseWordsJson({
+      words: [{ term: " Take  for\tgranted ", context_sentence: "x" }],
+    });
+    expect(result.ok && result.words[0]?.term).toBe("Take for granted");
+  });
+
   it("rejects a word with no context sentence, naming the field", () => {
     const result = parseWordsJson({ words: [{ term: "wary" }] });
     expect(result.ok).toBe(false);

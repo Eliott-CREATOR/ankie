@@ -8,7 +8,9 @@ const trimmed = (max: number) => z.string().trim().min(1).max(max);
 const list = z.array(trimmed(500)).max(50).optional();
 
 export const wordInputSchema = z.object({
-  term: trimmed(200),
+  // Runs of whitespace collapse in the stored term as well as in lemma_norm — it is shown verbatim
+  // on the card front.
+  term: trimmed(200).transform((s) => s.replace(/\s+/g, " ")),
   context_sentence: trimmed(2000),
   language: z
     .string()

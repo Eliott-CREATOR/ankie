@@ -1,4 +1,4 @@
-import { normalizeLemma } from "./normalize.js";
+import { normalizeLemma } from "@ankie/core";
 import type { WordInput } from "./payload.js";
 
 export interface IngestResult {
