@@ -68,11 +68,11 @@ alongside its D1 binding: static paths serve `apps/web`'s build directly, unmatc
 (`/health`, and every future API/MCP route) fall through to the Worker script. `apps/web` has no
 `wrangler.jsonc` of its own and is never deployed standalone.
 
-**Why:** Cloudflare Access (from C2, `docs/spec.md` §5) is cookie-based per origin. A cross-origin
-`fetch()` from a separately-deployed PWA into an Access-protected Worker gets redirected into the
-Access login flow instead of a clean CORS response — same-origin avoids that entirely, and the
-deadline for this decision was C2, not C4, so it was made in C0 while nothing depended on the
-two-origin URLs yet.
+**Why:** The PWA's `/api/*` calls carry the `x-ankie-secret` header (C2, `docs/spec.md` §5.1). Sent
+cross-origin, that custom header triggers a CORS preflight and needs `Access-Control-Allow-*`
+handling kept correct on every `/api/*` route; same-origin avoids that entirely. The decision was
+first made in C0 for Cloudflare Access, whose per-origin cookies break a cross-origin `fetch()` —
+Access was later rejected (`docs/spec.md` §5.1), but the single-origin conclusion still holds.
 
 **The cost — a build-order coupling that didn't exist before:** `apps/worker`'s deploy is only
 correct if `apps/web/dist` was built from current source first. A stale or missing `dist/` deploys
