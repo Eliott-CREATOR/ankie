@@ -13,16 +13,17 @@ export async function handleAppRequest(request: Request, env: Env): Promise<Resp
 
   if (url.pathname === "/health" && request.method === "GET") {
     let dbReachable: boolean;
-    let dbError: string | undefined;
     try {
       await env.DB.prepare("SELECT 1").first();
       dbReachable = true;
     } catch (err) {
       dbReachable = false;
-      dbError = err instanceof Error ? err.message : String(err);
+      // /health is public and ungated (docs/spec.md §5.1) — the D1 error text stays server-side
+      // (Fable N2, reports/T-005.md); anyone with the URL only ever learns the boolean.
+      console.error("GET /health: D1 unreachable", err);
     }
 
-    return Response.json({ ok: true, version: VERSION, dbReachable, ...(dbError && { dbError }) });
+    return Response.json({ ok: true, version: VERSION, dbReachable });
   }
 
   // Every /api/* path is header-gated (docs/spec.md §5.1) — the check runs before routing so a

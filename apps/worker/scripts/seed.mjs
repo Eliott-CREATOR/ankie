@@ -17,7 +17,7 @@
 // on it (nothing exists yet for them to match).
 
 import { createHash } from "node:crypto";
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, realpathSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 // Node strips the types natively (v25, .nvmrc) — no build step, same source the Worker runs.
@@ -157,6 +157,14 @@ function main() {
   console.log(`Wrote ${statements.length} statements (${wordCount} words) to ${outPath}`);
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+// Node makes argv[1] absolute but does not resolve symlinks, while import.meta.url for an ES
+// module is already the realpath — running this script through a symlinked path (any path
+// component, not just the final segment) made the old `argv[1] === fileURLToPath(...)` check
+// false and main() silently never ran (Fable N7, reports/T-007.md). realpathSync on both sides
+// closes that regardless of how the script was invoked.
+if (
+  process.argv[1] &&
+  realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))
+) {
   main();
 }

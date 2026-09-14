@@ -19,6 +19,7 @@ interface CurrentSenseRow {
   collocations: string | null;
   confusable_with: string | null;
   examples: string | null;
+  recognition_card_count: number;
 }
 
 // Same predicate as ingestWords.ts's isMissing — two call sites, not three, so this stays a
@@ -53,7 +54,9 @@ export async function enrichSense(
     .prepare(
       `SELECT lexemes.lemma AS term, senses.source_context, senses.gloss_l1, senses.definition_l2,
               senses.register, senses.domain, senses.collocations, senses.confusable_with,
-              senses.examples
+              senses.examples,
+              (SELECT COUNT(*) FROM cards
+               WHERE cards.sense_id = senses.id AND cards.atom_type = 'recognition') AS recognition_card_count
        FROM senses JOIN lexemes ON lexemes.id = senses.lexeme_id
        WHERE senses.id = ?1`,
     )
@@ -62,6 +65,16 @@ export async function enrichSense(
 
   if (!current) {
     return { ok: false, error: `no sense with id ${senseId}` };
+  }
+
+  // Refuse before any write (Fable N1, reports/T-005.md): the initial read already counts the
+  // sense's recognition cards, so an anomaly here means the sense row below is still untouched —
+  // "error" never means the caller is looking at a write that already happened.
+  if (current.recognition_card_count !== 1) {
+    return {
+      ok: false,
+      error: `expected exactly one recognition card for sense ${senseId}, found ${current.recognition_card_count}`,
+    };
   }
 
   const merged = {
@@ -119,9 +132,10 @@ export async function enrichSense(
       .bind(front, back, now, senseId),
   ]);
 
-  // A sense with no recognition card should be impossible — ingestWords creates both in the same
-  // transaction (docs/spec.md §5) — but if it ever happens, report it rather than silently
-  // returning a success that never actually refreshed a card.
+  // The count above already refused the write for 0-or-many cards; this only catches the narrow
+  // race of another call changing that count between the read and this batch (docs/spec.md §5's
+  // "one transaction … returns an error" still needs to hold in that case too) — belt and
+  // suspenders, not the primary guard.
   const cardsUpdated = results[1]?.meta.changes ?? 0;
   if (cardsUpdated !== 1) {
     return {

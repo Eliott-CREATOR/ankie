@@ -404,13 +404,21 @@ does not grant `/mcp` access. The two mechanisms never consult each other's stat
 - **`static_headers`.** Claude's simplest supported option, and confirmed not available on this
   account (see above).
 
-**Two honest limitations, accepted rather than solved:**
+**Three honest limitations, accepted rather than solved:**
 
 - The app shell (the static PWA HTML/JS/CSS) stays publicly readable — only `/api/*` is
   header-gated. Anyone with the URL can load the shell; they can't reach any data without the
   secret.
 - The PWA's secret lives in `localStorage`, readable by any script that achieves XSS on the page.
   Accepted for a single-user personal tool; revisit if that ever stops being true.
+- DCR is open — anyone who finds `/register` can register a client, and each registration is an
+  `env.OAUTH_KV.put()` against the free tier's 1,000-writes/day budget (Fable N6,
+  `reports/T-005.md`). `clientRegistrationCallback` (`apps/worker/src/oauth/authorize.ts`,
+  `rejectUnallowedRedirectUri`) rejects any registration whose `redirect_uris` aren't exactly this
+  allowlist before the KV write happens, which stops a script that doesn't bother imitating
+  Claude's callback. It does not stop one that copies that exact string — the field is
+  client-supplied and trivially spoofable, so this was never meant to be an identity check, only a
+  cost filter on the laziest abuse. Revisit if the write budget is ever actually exhausted.
 
 **Implementation details that fail silently if missed** (from Anthropic's connector docs):
 

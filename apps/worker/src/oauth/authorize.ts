@@ -1,4 +1,8 @@
-import type { AuthRequest } from "@cloudflare/workers-oauth-provider";
+import type {
+  AuthRequest,
+  ClientRegistrationCallbackOptions,
+  ClientRegistrationCallbackResult,
+} from "@cloudflare/workers-oauth-provider";
 import { secretsMatch } from "../auth/digest.js";
 import type { Env } from "../env.js";
 
@@ -15,7 +19,54 @@ import type { Env } from "../env.js";
 // https://claude.ai/api/mcp/auth_callback). Claude Code's RFC 8252 loopback callback
 // is not in this set — not used against this server yet; add it deliberately if that
 // changes, not as a wildcard.
-const ALLOWED_REDIRECT_URIS = new Set(["https://claude.ai/api/mcp/auth_callback"]);
+export const ALLOWED_REDIRECT_URIS = new Set(["https://claude.ai/api/mcp/auth_callback"]);
+
+// N6 (reports/T-005.md): DCR is open (docs/spec.md §5.1) — every /register call is an
+// env.OAUTH_KV.put(), and the free tier allows only 1,000 writes/day. Verified in the installed
+// package (node_modules/@cloudflare/workers-oauth-provider/dist/oauth-provider.js) that
+// clientRegistrationCallback runs, and can reject, before that KV write: the put is the next
+// statement after the callback returns. Wiring this in apps/worker/src/index.ts rejects any
+// registration whose redirect_uris aren't exactly this allowlist before it ever reaches storage.
+// This doesn't close DCR itself — a script that copies the allowed URI string verbatim still
+// registers a client (docs/spec.md §5.1's residual risk) — it only stops the scripts that don't.
+export function rejectUnallowedRedirectUri(
+  options: ClientRegistrationCallbackOptions,
+): ClientRegistrationCallbackResult | undefined {
+  const redirectUris = options.clientMetadata.redirect_uris;
+  const allAllowed =
+    Array.isArray(redirectUris) &&
+    redirectUris.length > 0 &&
+    redirectUris.every((uri) => typeof uri === "string" && ALLOWED_REDIRECT_URIS.has(uri));
+
+  if (allAllowed) {
+    return undefined;
+  }
+  return {
+    code: "invalid_client_metadata",
+    description: "redirect_uris must be exactly the allowed callback URI(s)",
+    status: 400,
+  };
+}
+
+// btoa/atob operate on Latin-1 strings and throw for any code point above 0xFF — a client-supplied
+// `state`, or a registered client's name, containing e.g. an accented character or emoji would
+// otherwise crash GET /authorize with an uncaught 500 before the form ever renders (Fable N3,
+// reports/T-005.md). Round-tripping through the request's UTF-8 bytes instead of the raw string
+// makes any input safe to encode — the only place a client's own scope/state text reaches btoa.
+function encodeState(oauthReqInfo: AuthRequest): string {
+  const bytes = new TextEncoder().encode(JSON.stringify({ oauthReqInfo }));
+  let binary = "";
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
+  }
+  return btoa(binary);
+}
+
+function decodeState(encoded: string): { oauthReqInfo?: AuthRequest } {
+  const binary = atob(encoded);
+  const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+  return JSON.parse(new TextDecoder().decode(bytes)) as { oauthReqInfo?: AuthRequest };
+}
 
 function escapeHtml(s: string): string {
   return s
@@ -84,7 +135,7 @@ export async function handleAuthorize(request: Request, env: Env): Promise<Respo
 
     const client = await env.OAUTH_PROVIDER.lookupClient(oauthReqInfo.clientId);
     const clientName = client?.clientName ?? oauthReqInfo.clientId;
-    const encodedState = btoa(JSON.stringify({ oauthReqInfo }));
+    const encodedState = encodeState(oauthReqInfo);
 
     return new Response(renderForm(clientName, encodedState), {
       headers: { "content-type": "text/html; charset=utf-8" },
@@ -102,7 +153,7 @@ export async function handleAuthorize(request: Request, env: Env): Promise<Respo
 
     let state: { oauthReqInfo?: AuthRequest };
     try {
-      state = JSON.parse(atob(encodedState));
+      state = decodeState(encodedState);
     } catch {
       return new Response("Invalid state", { status: 400 });
     }

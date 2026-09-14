@@ -1,7 +1,7 @@
 import OAuthProvider from "@cloudflare/workers-oauth-provider";
 import type { Env } from "./env.js";
 import { ankieMcpApiHandler } from "./mcp/server.js";
-import { handleAuthorize } from "./oauth/authorize.js";
+import { handleAuthorize, rejectUnallowedRedirectUri } from "./oauth/authorize.js";
 import { handleAppRequest } from "./routes/app.js";
 
 // OAuthProvider owns /token, /register, PKCE (S256, enforced — allowPlainPKCE defaults false),
@@ -24,6 +24,9 @@ export default new OAuthProvider<Env>({
   authorizeEndpoint: "/authorize",
   tokenEndpoint: "/token",
   clientRegistrationEndpoint: "/register",
+  // Rejects a junk registration's redirect_uris before the library's KV write (N6,
+  // reports/T-005.md) — see oauth/authorize.ts for why and the residual risk.
+  clientRegistrationCallback: rejectUnallowedRedirectUri,
   scopesSupported: ["mcp"],
   resourceMetadata: {
     resource: "https://ankie-worker.eliottmusy.workers.dev/mcp",

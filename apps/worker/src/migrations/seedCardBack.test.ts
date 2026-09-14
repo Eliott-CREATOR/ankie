@@ -78,7 +78,14 @@ describe("seed.mjs card backs carry the sense's definition_l2 (B1)", () => {
       };
       expect(back.definition_l2).toBe(row.definition_l2);
       expect(back.gloss_l1).toBe(row.gloss_l1);
-      expect(back.examples).toBe(row.examples === null ? null : JSON.parse(row.examples));
+      // buildStatements always passes examples: null to materializeCard (the CSV seed path never
+      // populates senses.examples) — assert that explicitly rather than the row-derived ternary
+      // this replaces, which could only ever evaluate to this same case and used `toBe` (Object.is)
+      // against a freshly-parsed array, so it could never have passed for a non-empty one anyway
+      // (Fable N8, reports/T-007.md). Non-empty examples are covered by enrichSense's card-refresh
+      // test instead, where the seed path can't reach that case at all.
+      expect(row.examples).toBeNull();
+      expect(back.examples).toBeNull();
     },
   );
 });
