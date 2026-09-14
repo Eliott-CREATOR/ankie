@@ -153,6 +153,18 @@ body {
   margin: 0;
 }
 
+.examples {
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--fg-dim);
+  margin: 0;
+  padding-left: 18px;
+}
+
+.examples li + li {
+  margin-top: 4px;
+}
+
 .source {
   font-size: 15px;
   line-height: 1.6;

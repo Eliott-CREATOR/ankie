@@ -21,6 +21,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 // Node strips the types natively (v25, .nvmrc) — no build step, same source the Worker runs.
+import { materializeCard } from "../../../packages/core/src/materialize.ts";
 import { normalizeLemma } from "../../../packages/core/src/normalize.ts";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -130,12 +131,13 @@ for (const cols of dataRows) {
     `INSERT OR IGNORE INTO senses (id, lexeme_id, sense_index, gloss_l1, definition_l2, register, domain, collocations, confusable_with, source_context, source_conversation, enrichment_status, created_at) VALUES (${sqlValue(senseId)}, ${sqlValue(lexemeId)}, 0, ${sqlValue(record.translation_fr)}, ${sqlValue(record.definition_l2)}, ${sqlValue(record.register)}, ${sqlValue(record.domain)}, NULL, NULL, ${sqlValue(record.example_sentence)}, NULL, 'complete', ${now});`,
   );
 
-  const front = JSON.stringify({ word: lemma, context_sentence: record.example_sentence });
-  const back = JSON.stringify({
-    word: lemma,
-    gloss_l1: record.translation_fr,
-    definition_l2: record.definition_l2 || null,
+  // Same materializer as the Worker's ingest path — the card shape has exactly one source.
+  const { front, back } = materializeCard({
+    term: lemma,
     context_sentence: record.example_sentence,
+    gloss_l1: record.translation_fr || null,
+    definition_l2: null,
+    examples: null,
   });
 
   statements.push(

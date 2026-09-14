@@ -1,4 +1,4 @@
-import { normalizeLemma } from "@ankie/core";
+import { materializeCard, normalizeLemma } from "@ankie/core";
 import type { WordInput } from "./payload.js";
 
 export interface IngestResult {
@@ -12,18 +12,10 @@ export type IngestOutcome = { ok: true; result: IngestResult } | { ok: false; er
 // D1 allows at most 100 bound parameters per statement.
 const LOOKUP_CHUNK = 90;
 
-// Same keys, same order as apps/worker/scripts/seed.mjs and apps/web/src/App.tsx's CardFront/
-// CardBack — these are materialized snapshots (docs/spec.md §5), so the shape is a contract.
-function materializeCard(word: WordInput): { front: string; back: string } {
-  return {
-    front: JSON.stringify({ word: word.term, context_sentence: word.context_sentence }),
-    back: JSON.stringify({
-      word: word.term,
-      gloss_l1: word.gloss_l1 ?? null,
-      definition_l2: word.definition_l2 ?? null,
-      context_sentence: word.context_sentence,
-    }),
-  };
+// Missing for enrichment purposes is undefined, null, or blank — the schema trims and rejects
+// empty strings, but this must hold for any caller, not just the validated ones.
+function isMissing(value: string | null | undefined): boolean {
+  return value === undefined || value === null || value.trim().length === 0;
 }
 
 function jsonOrNull(list: string[] | undefined): string | null {
@@ -109,7 +101,7 @@ export async function ingestWords(
     const lexemeId = crypto.randomUUID();
     const senseId = crypto.randomUUID();
     const cardId = crypto.randomUUID();
-    const needsEnrichment = word.gloss_l1 === undefined || word.definition_l2 === undefined;
+    const needsEnrichment = isMissing(word.gloss_l1) || isMissing(word.definition_l2);
     const { front, back } = materializeCard(word);
     insertedTerms.push({ term: word.term, needsEnrichment });
 
