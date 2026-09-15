@@ -481,8 +481,8 @@ C3 added cloze-production and collocation atoms, whose front/back JSON shapes di
 recognition's (§6, "Shapes"). A PWA build from before C3 only knows the recognition shape; if it
 received an unlocked cloze/collocation card, it would parse the JSON as recognition and crash on
 reveal (`context_sentence` isn't a key either shape has). Accepted rather than fixed now because
-the exposure window is small and closes on its own: the app shell is same-origin with no service
-worker (`CLAUDE.md` "Deployment architecture"), so a browser reload always fetches whatever build
+the exposure window is small and closes on its own: the app shell is same-origin with no
+service-worker caching (`CLAUDE.md` "Deployment architecture"), so a browser reload always fetches whatever build
 is currently deployed — there's no mechanism by which a stale pre-C3 build could persist across a
 reload. The remaining risk is a tab left open, unreloaded, from before the C3 deploy until a card
 actually unlocks — the earliest that can happen is `production_gate_days`/`COLLOCATION_GATE_DAYS`

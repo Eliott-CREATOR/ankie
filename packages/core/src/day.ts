@@ -41,8 +41,13 @@ function wallClockAt(instant: number, timeZone: string): WallClock {
   };
 }
 
+// `Intl` resolves wall-clock time to whole seconds (see `wallClockAt`), so subtracting a
+// millisecond-precise `instant` from it would leak `instant`'s fractional milliseconds straight
+// into the offset. Truncate to the top of the second first — real-world zone transitions land on
+// whole seconds, so this doesn't change which offset applies, only removes that leak.
 function offsetMsAt(instant: number, timeZone: string): number {
-  return wallClockAt(instant, timeZone).wallClockAsUtcMs - instant;
+  const instantAtWholeSecond = Math.floor(instant / 1000) * 1000;
+  return wallClockAt(instantAtWholeSecond, timeZone).wallClockAsUtcMs - instantAtWholeSecond;
 }
 
 // Local midnight via Intl only (docs/prompts/c3.md decision 4 — daily reset moves to local

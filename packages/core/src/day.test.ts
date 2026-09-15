@@ -66,4 +66,46 @@ describe("startOfLocalDay", () => {
     const midnight = startOfLocalDay(now, "Europe/Paris");
     expect(new Date(midnight).toISOString()).toBe("2024-10-26T22:00:00.000Z");
   });
+
+  it("does not leak the input instant's fractional milliseconds into the offset (T-038 repro)", () => {
+    const now = new Date("2026-09-16T01:23:45.678Z");
+    const midnight = startOfLocalDay(now, "Asia/Singapore");
+    expect(midnight).toBe(Date.parse("2026-09-15T16:00:00.000Z"));
+  });
+
+  it("stays whole-millisecond exact just before SGT midnight, with nonzero input ms", () => {
+    const now = new Date(Date.UTC(2024, 5, 14, 15, 59, 59, 999));
+    const midnight = startOfLocalDay(now, "Asia/Singapore");
+    expect(new Date(midnight).toISOString()).toBe("2024-06-13T16:00:00.000Z");
+  });
+
+  it("stays whole-millisecond exact just after SGT midnight, with nonzero input ms", () => {
+    const now = new Date(Date.UTC(2024, 5, 14, 16, 0, 0, 1));
+    const midnight = startOfLocalDay(now, "Asia/Singapore");
+    expect(new Date(midnight).toISOString()).toBe("2024-06-14T16:00:00.000Z");
+  });
+
+  it("stays whole-millisecond exact just before NY midnight on spring-forward day, with nonzero input ms", () => {
+    const now = new Date(Date.UTC(2024, 2, 10, 4, 59, 59, 999)); // 2024-03-09T23:59:59.999-05:00
+    const midnight = startOfLocalDay(now, "America/New_York");
+    expect(new Date(midnight).toISOString()).toBe("2024-03-09T05:00:00.000Z");
+  });
+
+  it("stays whole-millisecond exact just after NY midnight on spring-forward day, with nonzero input ms", () => {
+    const now = new Date(Date.UTC(2024, 2, 10, 5, 0, 0, 1)); // 2024-03-10T00:00:00.001-05:00
+    const midnight = startOfLocalDay(now, "America/New_York");
+    expect(new Date(midnight).toISOString()).toBe("2024-03-10T05:00:00.000Z");
+  });
+
+  it("stays whole-millisecond exact just before Paris midnight on spring-forward day, with nonzero input ms", () => {
+    const now = new Date(Date.UTC(2024, 2, 30, 22, 59, 59, 999)); // 2024-03-30T23:59:59.999+01:00
+    const midnight = startOfLocalDay(now, "Europe/Paris");
+    expect(new Date(midnight).toISOString()).toBe("2024-03-29T23:00:00.000Z");
+  });
+
+  it("stays whole-millisecond exact just after Paris midnight on spring-forward day, with nonzero input ms", () => {
+    const now = new Date(Date.UTC(2024, 2, 30, 23, 0, 0, 1)); // 2024-03-31T00:00:00.001+01:00
+    const midnight = startOfLocalDay(now, "Europe/Paris");
+    expect(new Date(midnight).toISOString()).toBe("2024-03-30T23:00:00.000Z");
+  });
 });
