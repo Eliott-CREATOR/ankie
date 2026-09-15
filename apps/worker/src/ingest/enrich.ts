@@ -1,10 +1,23 @@
-import { materializeCard } from "@ankie/core";
+import {
+  type AtomType,
+  type CardState,
+  initialAtomState,
+  materializeCard,
+  planAtoms,
+} from "@ankie/core";
 import type { EnrichFields } from "./payload.js";
+
+export interface EnrichAtomResult {
+  atom_type: AtomType;
+  state: CardState;
+  action: "created" | "updated" | "kept";
+}
 
 export interface EnrichCardResult {
   sense_id: string;
   enrichment_status: "complete" | "needs_enrichment";
   card: { front: string; back: string };
+  atoms: EnrichAtomResult[];
 }
 
 export type EnrichOutcome = { ok: true; result: EnrichCardResult } | { ok: false; error: string };
@@ -20,6 +33,13 @@ interface CurrentSenseRow {
   confusable_with: string | null;
   examples: string | null;
   recognition_card_count: number;
+  recognition_card_id: string | null;
+  recognition_stability: number | null;
+}
+
+interface ExistingAtomRow {
+  atom_type: AtomType;
+  state: CardState;
 }
 
 // Same predicate as ingestWords.ts's isMissing — two call sites, not three, so this stays a
@@ -56,7 +76,11 @@ export async function enrichSense(
               senses.register, senses.domain, senses.collocations, senses.confusable_with,
               senses.examples,
               (SELECT COUNT(*) FROM cards
-               WHERE cards.sense_id = senses.id AND cards.atom_type = 'recognition') AS recognition_card_count
+               WHERE cards.sense_id = senses.id AND cards.atom_type = 'recognition') AS recognition_card_count,
+              (SELECT id FROM cards
+               WHERE cards.sense_id = senses.id AND cards.atom_type = 'recognition') AS recognition_card_id,
+              (SELECT stability FROM cards
+               WHERE cards.sense_id = senses.id AND cards.atom_type = 'recognition') AS recognition_stability
        FROM senses JOIN lexemes ON lexemes.id = senses.lexeme_id
        WHERE senses.id = ?1`,
     )
@@ -75,6 +99,17 @@ export async function enrichSense(
       ok: false,
       error: `expected exactly one recognition card for sense ${senseId}, found ${current.recognition_card_count}`,
     };
+  }
+  const recognitionCardId = current.recognition_card_id;
+  if (!recognitionCardId) {
+    return { ok: false, error: `recognition card id missing for sense ${senseId}` };
+  }
+
+  const settings = await db
+    .prepare("SELECT production_gate_days FROM settings WHERE id = 1")
+    .first<{ production_gate_days: number }>();
+  if (!settings) {
+    return { ok: false, error: "settings row missing" };
   }
 
   const merged = {
@@ -105,7 +140,84 @@ export async function enrichSense(
     examples: merged.examples,
   });
 
+  // Plan atoms from the merged sense — the same primitive ingest uses, so a word enriched with a
+  // gloss gains exactly the cloze/collocation atoms a fresh ingest of that content would have
+  // produced. Recognition is handled by the UPDATE above; only the gated atoms are synced here.
+  const planned = planAtoms(
+    {
+      term: current.term,
+      context_sentence: current.source_context,
+      gloss_l1: merged.gloss_l1 ?? null,
+      definition_l2: merged.definition_l2 ?? null,
+      examples: merged.examples ?? null,
+      collocations: merged.collocations ?? null,
+      register: merged.register ?? null,
+    },
+    { productionGateDays: settings.production_gate_days },
+  ).filter((atom) => atom.atom_type !== "recognition");
+
+  const existingAtoms = await db
+    .prepare(
+      `SELECT atom_type, state FROM cards WHERE sense_id = ?1 AND atom_type != 'recognition'
+       ORDER BY atom_type`,
+    )
+    .bind(senseId)
+    .all<ExistingAtomRow>();
+  const existingByType = new Map(existingAtoms.results.map((row) => [row.atom_type, row.state]));
+
   const now = Date.now();
+  const atomStatements: D1PreparedStatement[] = [];
+  const atomResults: EnrichAtomResult[] = [];
+  const plannedTypes = new Set(planned.map((atom) => atom.atom_type));
+
+  for (const atom of planned) {
+    const existingState = existingByType.get(atom.atom_type);
+    if (existingState !== undefined) {
+      atomStatements.push(
+        db
+          .prepare(
+            `UPDATE cards SET front = ?1, back = ?2, updated_at = ?3
+             WHERE sense_id = ?4 AND atom_type = ?5`,
+          )
+          .bind(atom.front, atom.back, now, senseId, atom.atom_type),
+      );
+      atomResults.push({ atom_type: atom.atom_type, state: existingState, action: "updated" });
+    } else {
+      const state = initialAtomState(atom.unlock_min_stability, current.recognition_stability);
+      atomStatements.push(
+        db
+          .prepare(
+            `INSERT INTO cards (id, sense_id, atom_type, front, back, state, unlock_after_card,
+               unlock_min_stability, due, stability, difficulty, elapsed_days, scheduled_days,
+               reps, lapses, last_review, updated_at)
+             SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, NULL, NULL, NULL, 0, 0, 0, 0, NULL, ?9
+             WHERE EXISTS (SELECT 1 FROM senses WHERE id = ?2)
+               AND NOT EXISTS (SELECT 1 FROM cards WHERE sense_id = ?2 AND atom_type = ?3)`,
+          )
+          .bind(
+            crypto.randomUUID(),
+            senseId,
+            atom.atom_type,
+            atom.front,
+            atom.back,
+            state,
+            recognitionCardId,
+            atom.unlock_min_stability,
+            now,
+          ),
+      );
+      atomResults.push({ atom_type: atom.atom_type, state, action: "created" });
+    }
+  }
+
+  // Atoms that exist but are no longer eligible keep their history and content untouched
+  // (docs/prompts/c3.md "Backward compatibility") — reported, but no statement issued for them.
+  for (const [atomType, state] of existingByType) {
+    if (!plannedTypes.has(atomType)) {
+      atomResults.push({ atom_type: atomType, state, action: "kept" });
+    }
+  }
+
   const results = await db.batch([
     db
       .prepare(
@@ -130,6 +242,7 @@ export async function enrichSense(
          WHERE sense_id = ?4 AND atom_type = 'recognition'`,
       )
       .bind(front, back, now, senseId),
+    ...atomStatements,
   ]);
 
   // The count above already refused the write for 0-or-many cards; this only catches the narrow
@@ -146,7 +259,12 @@ export async function enrichSense(
 
   return {
     ok: true,
-    result: { sense_id: senseId, enrichment_status: enrichmentStatus, card: { front, back } },
+    result: {
+      sense_id: senseId,
+      enrichment_status: enrichmentStatus,
+      card: { front, back },
+      atoms: atomResults,
+    },
   };
 }
 

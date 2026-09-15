@@ -1,4 +1,4 @@
-import { materializeCard, normalizeLemma } from "@ankie/core";
+import { initialAtomState, materializeCard, normalizeLemma, planAtoms } from "@ankie/core";
 import type { WordInput } from "./payload.js";
 
 export interface IngestResult {
@@ -103,9 +103,21 @@ export async function ingestWords(
     }
   }
 
+  const settings = await db
+    .prepare("SELECT production_gate_days FROM settings WHERE id = 1")
+    .first<{ production_gate_days: number }>();
+  if (!settings) {
+    return { ok: false, error: "settings row missing" };
+  }
+  const productionGateDays = settings.production_gate_days;
+
   const now = Date.now();
   const statements: D1PreparedStatement[] = [];
-  const insertedTerms: { term: string; needsEnrichment: boolean }[] = [];
+  // Index of each word's lexeme-insert statement, not a fixed stride: a word that plans zero,
+  // one, or two atoms beyond recognition no longer contributes a fixed number of statements
+  // (`ingestWords.ts` reconciles results as `results[i * 3]` was the exact trap the task named).
+  const insertedTerms: { term: string; needsEnrichment: boolean; lexemeStatementIndex: number }[] =
+    [];
 
   for (const { word, language, lemmaNorm } of toInsert) {
     const lexemeId = crypto.randomUUID();
@@ -113,7 +125,11 @@ export async function ingestWords(
     const cardId = crypto.randomUUID();
     const needsEnrichment = isMissing(word.gloss_l1) || isMissing(word.definition_l2);
     const { front, back } = materializeCard(word);
-    insertedTerms.push({ term: word.term, needsEnrichment });
+    insertedTerms.push({
+      term: word.term,
+      needsEnrichment,
+      lexemeStatementIndex: statements.length,
+    });
 
     statements.push(
       db
@@ -156,6 +172,48 @@ export async function ingestWords(
         )
         .bind(cardId, senseId, front, back, now),
     );
+
+    const planned = planAtoms(
+      {
+        term: word.term,
+        context_sentence: word.context_sentence,
+        gloss_l1: word.gloss_l1 ?? null,
+        definition_l2: word.definition_l2 ?? null,
+        examples: word.examples ?? null,
+        collocations: word.collocations ?? null,
+        register: word.register ?? null,
+      },
+      { productionGateDays },
+    );
+
+    for (const atom of planned) {
+      if (atom.atom_type === "recognition") {
+        continue;
+      }
+      const atomId = crypto.randomUUID();
+      const state = initialAtomState(atom.unlock_min_stability, null);
+      statements.push(
+        db
+          .prepare(
+            `INSERT INTO cards (id, sense_id, atom_type, front, back, state, unlock_after_card,
+               unlock_min_stability, due, stability, difficulty, elapsed_days, scheduled_days, reps,
+               lapses, last_review, updated_at)
+             SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, NULL, NULL, NULL, 0, 0, 0, 0, NULL, ?9
+             WHERE EXISTS (SELECT 1 FROM senses WHERE id = ?2)`,
+          )
+          .bind(
+            atomId,
+            senseId,
+            atom.atom_type,
+            atom.front,
+            atom.back,
+            state,
+            cardId,
+            atom.unlock_min_stability,
+            now,
+          ),
+      );
+    }
   }
 
   const expectedAdded = toInsert.length;
@@ -177,19 +235,21 @@ export async function ingestWords(
 
   const results = await db.batch(statements);
 
-  // Reconcile against what the conditional inserts actually did. This only differs from the
+  // Reconcile against what the conditional lexeme insert actually did, by the statement index
+  // recorded per word — not a fixed stride, now that a word contributes a variable number of
+  // statements (recognition plus zero, one, or two gated atoms). This only differs from the
   // lookup above if another call inserted the same word between the lookup and the batch; the
   // response reports the truth, and the ingest_log row keeps the pre-batch expectation.
   const needsEnrichment: string[] = [];
   let added = 0;
-  insertedTerms.forEach((entry, i) => {
-    if (results[i * 3]?.meta.changes === 1) {
+  for (const entry of insertedTerms) {
+    if (results[entry.lexemeStatementIndex]?.meta.changes === 1) {
       added++;
       if (entry.needsEnrichment) {
         needsEnrichment.push(entry.term);
       }
     }
-  });
+  }
 
   return {
     ok: true,

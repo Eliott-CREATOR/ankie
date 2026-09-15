@@ -29,6 +29,10 @@ class FakeStatement {
     return (row as T | undefined) ?? null;
   }
 
+  async all<T>(): Promise<{ results: T[] }> {
+    return { results: this.stmt.all(...(this.params as never[])) as T[] };
+  }
+
   async run(): Promise<{ meta: { changes: number } }> {
     const info = this.stmt.run(...(this.params as never[]));
     return { meta: { changes: Number(info.changes) } };
@@ -47,6 +51,9 @@ function openDb(): DatabaseSync {
   db.exec(migration("0001_init.sql"));
   db.exec(migration("0004_sense_examples.sql"));
   db.exec("INSERT INTO languages (code, name) VALUES ('en', 'English')");
+  db.exec(
+    "INSERT INTO settings (id, desired_retention, daily_new_limit, daily_review_limit, production_gate_days) VALUES (1, 0.9, 15, 200, 21)",
+  );
   return db;
 }
 
@@ -67,10 +74,42 @@ function insertCard(db: DatabaseSync, senseId: string, cardId: string): void {
   ).run(cardId, senseId);
 }
 
+function insertAtomCard(
+  db: DatabaseSync,
+  senseId: string,
+  cardId: string,
+  atomType: string,
+  unlockAfterCard: string,
+  unlockMinStability: number,
+  state: string,
+): void {
+  db.prepare(
+    `INSERT INTO cards (id, sense_id, atom_type, front, back, state, unlock_after_card,
+       unlock_min_stability, updated_at)
+     VALUES (?, ?, ?, '{}', '{}', ?, ?, ?, 0)`,
+  ).run(cardId, senseId, atomType, state, unlockAfterCard, unlockMinStability);
+}
+
 function senseRow(db: DatabaseSync, id: string): { definition_l2: string | null } {
   return db.prepare("SELECT definition_l2 FROM senses WHERE id = ?").get(id) as {
     definition_l2: string | null;
   };
+}
+
+function atomCards(
+  db: DatabaseSync,
+  senseId: string,
+): { atom_type: string; state: string; unlock_after_card: string | null; front: string }[] {
+  return db
+    .prepare(
+      "SELECT atom_type, state, unlock_after_card, front FROM cards WHERE sense_id = ? AND atom_type != 'recognition' ORDER BY atom_type",
+    )
+    .all(senseId) as {
+    atom_type: string;
+    state: string;
+    unlock_after_card: string | null;
+    front: string;
+  }[];
 }
 
 // N1 (reports/T-005.md): the card-count check used to run after db.batch(), so a sense with zero
@@ -140,5 +179,110 @@ describe("enrichSense — refreshes the card back (N4)", () => {
       expect(outcome.result.card.front).toBe(expected.front);
       expect(outcome.result.enrichment_status).toBe("complete");
     }
+  });
+});
+
+// T-018 (docs/prompts/c3.md): enrichment plans atoms from the merged sense, creating newly
+// eligible ones, refreshing existing ones still planned, and leaving the rest untouched.
+describe("enrichSense — syncs card atoms (T-018)", () => {
+  it("creates newly eligible atoms, locked against the recognition card's current (null) stability", async () => {
+    const db = openDb();
+    insertSense(db, "s-new-atoms", "conundrum", "It was a real conundrum.");
+    insertCard(db, "s-new-atoms", "c-new-atoms");
+
+    const outcome = await enrichSense(fakeD1(db), "s-new-atoms", {
+      gloss_l1: "casse-tête",
+      examples: ["This conundrum has no easy answer."],
+      collocations: ["face a conundrum"],
+    });
+
+    expect(outcome.ok).toBe(true);
+    if (outcome.ok) {
+      expect(outcome.result.atoms).toEqual(
+        expect.arrayContaining([
+          { atom_type: "cloze_production", state: "locked", action: "created" },
+          { atom_type: "collocation", state: "locked", action: "created" },
+        ]),
+      );
+      expect(outcome.result.atoms).toHaveLength(2);
+    }
+
+    const atoms = atomCards(db, "s-new-atoms");
+    expect(atoms.map((a) => a.atom_type)).toEqual(["cloze_production", "collocation"]);
+    for (const atom of atoms) {
+      expect(atom.state).toBe("locked");
+      expect(atom.unlock_after_card).toBe("c-new-atoms");
+      expect(atom.front).not.toBe("{}");
+    }
+  });
+
+  it("creates a newly eligible atom already unlocked when the recognition card's stability clears the threshold", async () => {
+    const db = openDb();
+    insertSense(db, "s-cleared", "conundrum", "It was a real conundrum.");
+    insertCard(db, "s-cleared", "c-cleared");
+    db.prepare("UPDATE cards SET stability = 30 WHERE id = ?").run("c-cleared");
+
+    const outcome = await enrichSense(fakeD1(db), "s-cleared", {
+      gloss_l1: "casse-tête",
+      examples: ["This conundrum has no easy answer."],
+    });
+
+    expect(outcome.ok).toBe(true);
+    if (outcome.ok) {
+      expect(outcome.result.atoms).toEqual([
+        { atom_type: "cloze_production", state: "new", action: "created" },
+      ]);
+    }
+    const atoms = atomCards(db, "s-cleared");
+    expect(atoms).toHaveLength(1);
+    expect(atoms[0]?.state).toBe("new");
+  });
+
+  it("refreshes front/back of an existing atom whose type is still planned", async () => {
+    const db = openDb();
+    insertSense(db, "s-refresh", "conundrum", "It was a real conundrum.");
+    insertCard(db, "s-refresh", "c-refresh");
+    insertAtomCard(db, "s-refresh", "atom-colloc", "collocation", "c-refresh", 7, "locked");
+
+    const outcome = await enrichSense(fakeD1(db), "s-refresh", {
+      collocations: ["face a conundrum"],
+    });
+
+    expect(outcome.ok).toBe(true);
+    if (outcome.ok) {
+      expect(outcome.result.atoms).toEqual([
+        { atom_type: "collocation", state: "locked", action: "updated" },
+      ]);
+    }
+    const atoms = atomCards(db, "s-refresh");
+    expect(atoms).toHaveLength(1);
+    expect(atoms[0]?.front).not.toBe("{}");
+    expect(atoms[0]?.state).toBe("locked");
+    expect(atoms[0]?.unlock_after_card).toBe("c-refresh");
+  });
+
+  it("leaves atoms no longer eligible untouched and reports them as kept", async () => {
+    const db = openDb();
+    insertSense(db, "s-kept", "conundrum", "It was a real conundrum.");
+    insertCard(db, "s-kept", "c-kept");
+    insertAtomCard(db, "s-kept", "atom-cloze", "cloze_production", "c-kept", 21, "locked");
+    insertAtomCard(db, "s-kept", "atom-colloc", "collocation", "c-kept", 7, "locked");
+
+    // gloss_l1 was already set (needed for the pre-existing cloze atom); registering the word as
+    // archaic now gates every production/usage atom out, but never deletes what already exists.
+    const outcome = await enrichSense(fakeD1(db), "s-kept", { register: "archaic" });
+
+    expect(outcome.ok).toBe(true);
+    if (outcome.ok) {
+      expect(outcome.result.atoms).toEqual([
+        { atom_type: "cloze_production", state: "locked", action: "kept" },
+        { atom_type: "collocation", state: "locked", action: "kept" },
+      ]);
+    }
+    const atoms = atomCards(db, "s-kept");
+    expect(atoms).toEqual([
+      { atom_type: "cloze_production", state: "locked", unlock_after_card: "c-kept", front: "{}" },
+      { atom_type: "collocation", state: "locked", unlock_after_card: "c-kept", front: "{}" },
+    ]);
   });
 });
