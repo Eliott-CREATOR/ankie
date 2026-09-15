@@ -10,7 +10,10 @@ interface ReviewRequestBody {
   rating?: unknown;
   reviewedAt?: unknown;
   durationMs?: unknown;
+  typedAnswer?: unknown;
 }
+
+const MAX_TYPED_ANSWER_LENGTH = 500;
 
 function isValidRating(value: unknown): value is ReviewRating {
   return value === 1 || value === 2 || value === 3 || value === 4;
@@ -47,6 +50,16 @@ export async function handleReview(request: Request, env: { DB: D1Database }): P
       { error: "rating must be 1 (Again), 2 (Hard), 3 (Good), or 4 (Easy)" },
       { status: 400 },
     );
+  }
+  let typedAnswer: string | null = null;
+  if (body.typedAnswer !== undefined) {
+    if (typeof body.typedAnswer !== "string" || body.typedAnswer.length > MAX_TYPED_ANSWER_LENGTH) {
+      return Response.json(
+        { error: `typedAnswer must be a string of at most ${MAX_TYPED_ANSWER_LENGTH} characters` },
+        { status: 400 },
+      );
+    }
+    typedAnswer = body.typedAnswer;
   }
   const now = Date.now();
   // Clamped, not merely validated: a client clock running ahead must never schedule a card into
@@ -117,11 +130,26 @@ export async function handleReview(request: Request, env: { DB: D1Database }): P
 
   const insertLog = env.DB.prepare(
     `INSERT INTO review_log (id, card_id, rating, state_before, reviewed_at, duration_ms, typed_answer, device)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, NULL)`,
-  ).bind(body.id, card.id, body.rating, JSON.stringify(card), reviewedAt, durationMs);
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL)`,
+  ).bind(body.id, card.id, body.rating, JSON.stringify(card), reviewedAt, durationMs, typedAnswer);
 
+  // A recognition card is the only kind other cards gate on (docs/prompts/c3.md "Unlock
+  // mechanics") — rating a cloze/collocation card never unlocks anything, so this statement is
+  // only added to the batch when it could possibly match a row.
+  const statements = [updateCard, insertLog];
+  const unlockStatementIndex = card.atom_type === "recognition" ? statements.length : null;
+  if (unlockStatementIndex !== null) {
+    statements.push(
+      env.DB.prepare(
+        `UPDATE cards SET state = 'new', updated_at = ?1
+         WHERE unlock_after_card = ?2 AND state = 'locked' AND unlock_min_stability <= ?3`,
+      ).bind(savedAt, card.id, result.card.stability),
+    );
+  }
+
+  let batchResults: Awaited<ReturnType<typeof env.DB.batch>>;
   try {
-    await env.DB.batch([updateCard, insertLog]);
+    batchResults = await env.DB.batch(statements);
   } catch (err) {
     return Response.json(
       { error: `failed to save review: ${err instanceof Error ? err.message : String(err)}` },
@@ -129,5 +157,14 @@ export async function handleReview(request: Request, env: { DB: D1Database }): P
     );
   }
 
-  return Response.json({ ok: true, cardId: card.id, reviewLogId: body.id, card: result.card });
+  const unlocked =
+    unlockStatementIndex !== null ? (batchResults[unlockStatementIndex]?.meta.changes ?? 0) : 0;
+
+  return Response.json({
+    ok: true,
+    cardId: card.id,
+    reviewLogId: body.id,
+    card: result.card,
+    unlocked,
+  });
 }
