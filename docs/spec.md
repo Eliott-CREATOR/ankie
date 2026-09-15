@@ -191,6 +191,11 @@ CREATE TABLE cards (
   updated_at     INTEGER NOT NULL
 );
 CREATE INDEX idx_cards_due ON cards(state, due);
+-- 0006_card_atoms.sql (C3): one atom per (sense, atom_type) is now DB-enforced, not just
+-- caller discipline — ingest/enrich/backfill all rely on it to stay idempotent. `idx_cards_unlock`
+-- makes POST /api/review's unlock step (WHERE unlock_after_card = ?) a point lookup as cards grow.
+CREATE UNIQUE INDEX idx_cards_sense_atom ON cards(sense_id, atom_type);
+CREATE INDEX idx_cards_unlock ON cards(unlock_after_card);
 
 -- Append-only, never mutated. This is what makes offline sync trivial.
 CREATE TABLE review_log (
@@ -213,7 +218,8 @@ CREATE TABLE settings (
   daily_review_limit       INTEGER NOT NULL DEFAULT 200,
   production_gate_days     INTEGER NOT NULL DEFAULT 21,
   params_trained_at        INTEGER,
-  params_trained_on_reviews INTEGER
+  params_trained_on_reviews INTEGER,
+  timezone                 TEXT NOT NULL DEFAULT 'Asia/Singapore' -- 0006 (C3): local-day fix, §7
 );
 
 CREATE TABLE ingest_log (
@@ -282,11 +288,12 @@ header-gated by `API_SECRET`, not OAuth — see §5.1.
 
 ```ts
 ankie_get_due_summary()
-→ { due: number, new: number, pending_enrichment: number }
+→ { due: number, new: number, locked: number, pending_enrichment: number }
 ```
 
 True backlog totals, not capped by the day's remaining `daily_new_limit`/`daily_review_limit` the
-way `GET /api/due`'s queue is.
+way `GET /api/due`'s queue is. `locked` (C3) counts atoms still gated behind their recognition
+card's production threshold — see §6.
 
 ```ts
 ankie_get_pending_enrichment(limit?: number)  // 1-100, default 20
@@ -298,12 +305,19 @@ ankie_enrich(sense_id: string, fields: {
   gloss_l1?, definition_l2?, examples?, collocations?, register?, domain?, confusable_with?
   // same shapes/limits as ankie_add_words; at least one field required
 })
-→ { sense_id: string, enrichment_status: 'complete' | 'needs_enrichment', card: { front: string, back: string } }
+→ { sense_id: string, enrichment_status: 'complete' | 'needs_enrichment',
+    card: { front: string, back: string },
+    atoms: { atom_type: string, state: string, action: 'created' | 'updated' | 'kept' }[] }
 ```
 
 Fields the caller supplies replace the current value; fields left out are untouched — this tops up
 missing content, it doesn't reset what's already there. An unknown `sense_id`, or a sense with no
-recognition card to update, returns `isError: true` rather than a silent no-op.
+recognition card to update, returns `isError: true` rather than a silent no-op. `atoms` (C3) is
+additive: the recognition card is refreshed exactly as before, and every non-recognition atom
+eligible from the merged sense is synced alongside it — refreshed if it already exists, created
+(locked or already unlocked, depending on the recognition card's current stability) if it's newly
+eligible. An atom that stops being eligible (e.g. register changed to `archaic`) is never deleted —
+it keeps its history and content, reported as `action: "kept"`.
 
 **Not built:** `ankie_get_leeches` and `ankie_log_production`, both named in an earlier draft of
 this spec, are not registered tools as of C2. `ankie_get_leeches` — the point of the whole system,
@@ -325,6 +339,15 @@ update — one transaction, not a follow-up migration. If that batch ever update
 one card for a sense, the tool returns an error instead of a silent success that never actually
 refreshed the card. `GET /api/due` keeps its single-round-trip property; the read-time-join
 alternative this spec once weighed was not built.
+
+**`GET /api/due` and `POST /api/review` (C3, header-gated by `API_SECRET` like the rest of `/api/*`
+— see below) both gained additive fields.** `GET /api/due` still returns `{ cards, nextDueAt }`;
+each card now also carries `language_code`, `tts_voice_hint`, and `frequency_band` — an old PWA
+build ignores fields it doesn't recognize. `POST /api/review` accepts an optional `typedAnswer`
+(string, ≤500 chars) stored on `review_log.typed_answer`, and its response gains `unlocked: number`
+— how many previously-`locked` atoms that rating's card unlocked (see §6). Neither field is
+required; a caller that never sends `typedAnswer` and never atom-gates anything sees no behavior
+change.
 
 ### 5.1 Auth — two secrets, two mechanisms, no shared session
 
@@ -454,11 +477,19 @@ Never expose an unauthenticated MCP endpoint — anyone who found the URL could 
 
 Each word yields several **atoms**, scheduled independently:
 
-1. **Recognition** — the word inside a short context sentence → meaning. Always first.
-2. **Cloze production** — sentence blanked, French gloss + first letter, typed answer. **`locked` until the recognition card's stability ≥ `production_gate_days` (21).** Receptive before productive.
-3. **Collocation** — `___ a decision` → *make / take*. Only where usage, not meaning, is the difficulty.
+1. **Recognition** — the word inside a short context sentence → meaning. Always first, always eligible.
+2. **Cloze production** — sentence blanked, French gloss + first letter, typed answer. **`locked` until the recognition card's stability ≥ `production_gate_days` (21, `settings.production_gate_days`).** Receptive before productive.
+3. **Collocation** — `___ a decision` → *make / take*. Only where usage, not meaning, is the difficulty. **`locked` until recognition stability ≥ 7 days** (`COLLOCATION_GATE_DAYS`, `packages/core/src/atoms.ts` — gated on the same signal as cloze, at a shorter threshold: a usage card before the meaning is known is noise).
 
-Card budget by frequency band: high-frequency and productive-target words get 3 atoms; literary or archaic vocabulary gets recognition only.
+**Eligibility, as built (`planAtoms`, `packages/core/src/atoms.ts`):** cloze needs a non-blank
+`gloss_l1` *and* a sentence (an example, else the source context sentence) that actually contains
+the term; collocation needs at least one `collocations` entry whose tokens, minus the term and
+function words (`a an the to of in on at for with by from into up`), reduce to exactly one content
+word. Neither check is about word frequency — **register decides the atom budget, not frequency**:
+`register` of `archaic` or `literary` (case-insensitive) gates a word to recognition only,
+whatever its gloss or collocations look like; every other register is eligible for whichever of
+cloze/collocation its content supports. Frequency band only orders the new-card queue (§7); it
+never cuts atoms.
 
 **Rules the generator enforces:**
 
@@ -475,17 +506,31 @@ Card budget by frequency band: high-frequency and productive-target words get 3 
 FSRS decides *when*. These decide *what enters and what is shown*:
 
 1. Daily new-card budget, introduced in frequency-band order.
-   **C1 implementation note — day boundary is UTC, not local.** `GET /api/due` resets
-   `daily_new_limit`/`daily_review_limit` at UTC midnight. For Eliott in Singapore (UTC+8) that's
-   08:00 local — mid-morning, not overnight — so a full day's allotment can appear to reset while
-   he's mid-session, or the "next card" time on the home screen can read oddly close. **Record for
-   C3:** the proper fix is a timezone column in `settings`, not a UTC-offset hack; don't build it
-   before then.
-2. Never introduce two confusable words the same day.
-3. Sibling burying — production and recognition atoms of one sense never in one session.
-4. Production gate — cloze atom stays `locked` until recognition stability clears the threshold.
-5. Leech rule — 6 lapses → suspend, surface via `ankie_get_leeches`.
-6. On-device optimizer — once ≥1000 reviews exist, a "re-optimise" button runs `fsrs-browser`, writes params to `settings`, pushes them up on next sync. **This is the real personalisation:** after a few weeks it schedules for Eliott's forgetting curve, not an average human's.
+   **Day boundary is local, as of C3** (`settings.timezone`, default `Asia/Singapore`;
+   `startOfLocalDay`, `packages/core/src/day.ts`). `GET /api/due` resets `daily_new_limit`/
+   `daily_review_limit` at local midnight, not UTC midnight — the C1 UTC-boundary problem this
+   note used to describe (a full day's allotment appearing to reset mid-session, 8 hours off for
+   Singapore) is fixed, not just recorded. `startOfLocalDay` reads `now`'s wall-clock date/time in
+   the target zone via `Intl.DateTimeFormat`, so it tracks DST in zones that observe it without a
+   stored offset.
+2. Never introduce two confusable words the same local day. As built: a new candidate is skipped
+   if its lemma (normalized) matches, in either direction, the confusable list of any card already
+   selected for today's queue or introduced earlier today (`reps = 1`, its first-ever review, in
+   today's local day) — not merely reviewed today. Only new cards are filtered this way; an
+   overdue review is never skipped for confusability.
+3. Sibling burying — at most one card per sense enters a single day's queue: a due or new
+   candidate is skipped if a sibling atom of the same sense was already selected for today's
+   queue, or any atom of that sense was reviewed earlier today (any rating, not just first-ever).
+4. New-card order, as built (`selectQueue`, `packages/core/src/queue.ts`): conversation-sourced
+   words first, then unlocked non-recognition atoms (a word graduating to production/usage
+   outranks a brand-new one), then frequency band common → rare (`A`→`D`, unknown last), then
+   insertion order.
+5. Production gate — cloze and collocation atoms stay `locked` until recognition stability clears
+   their threshold (21 and 7 days respectively; §6). Unlocking runs inside `POST /api/review`'s own
+   write, in the same batch as the rating that crossed the threshold — no separate job or poll.
+6. Leech rule — 6 lapses → suspend, surface via `ankie_get_leeches`. **Not built** (§5): no lapse
+   streak is tracked yet.
+7. On-device optimizer — once ≥1000 reviews exist, a "re-optimise" button runs `fsrs-browser`, writes params to `settings`, pushes them up on next sync. **This is the real personalisation:** after a few weeks it schedules for Eliott's forgetting curve, not an average human's. **Not built.**
 
 ---
 

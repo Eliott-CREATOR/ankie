@@ -58,8 +58,9 @@ function createServer(env: Env) {
     "ankie_get_due_summary",
     {
       description:
-        "Reports how many cards are due for review, how many new cards are waiting, and how " +
-        "many words still need a gloss or definition before they're fully enriched.",
+        "Reports how many cards are due for review, how many new cards are waiting, how many " +
+        "are locked behind a production gate, and how many words still need a gloss or " +
+        "definition before they're fully enriched.",
     },
     async () => {
       const summary = await getDueSummary(env.DB);
@@ -86,8 +87,8 @@ function createServer(env: Env) {
     {
       description:
         "Fills in missing content (gloss, definition, examples, collocations, register, domain, " +
-        "confusables) on a word that was added bare. Refreshes the review card in the same step, " +
-        "so the change is visible immediately.",
+        "confusables) on a word that was added bare. Refreshes every card of the word in the " +
+        "same step and creates any newly eligible ones, so the change is visible immediately.",
       inputSchema: enrichInputSchema,
     },
     async ({ sense_id, fields }) => {

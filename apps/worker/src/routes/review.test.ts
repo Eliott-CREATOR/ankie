@@ -1,55 +1,8 @@
-/// <reference types="node" />
-import { readFileSync } from "node:fs";
-import path from "node:path";
-import { DatabaseSync, type StatementSync } from "node:sqlite";
-import { fileURLToPath } from "node:url";
+import type { DatabaseSync } from "node:sqlite";
 import { type CardRow, createScheduler, rateCard } from "@ankie/core";
 import { describe, expect, it } from "vitest";
+import { fakeD1, openDb } from "../testSupport/fakeD1.js";
 import { handleReview } from "./review.js";
-
-const here = path.dirname(fileURLToPath(import.meta.url));
-const migration = (name: string) => readFileSync(path.join(here, "../../migrations", name), "utf8");
-
-// Same minimal D1Database shim as ingestWords.test.ts / enrich.test.ts (third duplication — a
-// shared helper would need a new non-test file, outside this task's file list).
-class FakeStatement {
-  constructor(
-    private readonly stmt: StatementSync,
-    private readonly params: unknown[] = [],
-  ) {}
-
-  bind(...values: unknown[]): FakeStatement {
-    return new FakeStatement(this.stmt, values);
-  }
-
-  async first<T>(): Promise<T | null> {
-    const row = this.stmt.get(...(this.params as never[]));
-    return (row as T | undefined) ?? null;
-  }
-
-  async run(): Promise<{ meta: { changes: number } }> {
-    const info = this.stmt.run(...(this.params as never[]));
-    return { meta: { changes: Number(info.changes) } };
-  }
-}
-
-function fakeD1(db: DatabaseSync): D1Database {
-  return {
-    prepare: (sql: string) => new FakeStatement(db.prepare(sql)),
-    batch: async (statements: FakeStatement[]) => Promise.all(statements.map((s) => s.run())),
-  } as unknown as D1Database;
-}
-
-function openDb(): DatabaseSync {
-  const db = new DatabaseSync(":memory:");
-  db.exec(migration("0001_init.sql"));
-  db.exec(migration("0004_sense_examples.sql"));
-  db.exec("INSERT INTO languages (code, name) VALUES ('en', 'English')");
-  db.exec(
-    "INSERT INTO settings (id, desired_retention, daily_new_limit, daily_review_limit, production_gate_days) VALUES (1, 0.9, 15, 200, 21)",
-  );
-  return db;
-}
 
 function insertSense(db: DatabaseSync, id: string, lemma: string): void {
   db.prepare(

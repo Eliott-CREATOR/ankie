@@ -1,61 +1,8 @@
-/// <reference types="node" />
-import { readFileSync } from "node:fs";
-import path from "node:path";
-import { DatabaseSync, type StatementSync } from "node:sqlite";
-import { fileURLToPath } from "node:url";
+import type { DatabaseSync } from "node:sqlite";
 import { materializeCard } from "@ankie/core";
 import { describe, expect, it } from "vitest";
+import { fakeD1, openDb } from "../testSupport/fakeD1.js";
 import { enrichSense } from "./enrich.js";
-
-const here = path.dirname(fileURLToPath(import.meta.url));
-const migration = (name: string) => readFileSync(path.join(here, "../../migrations", name), "utf8");
-
-// Minimal D1Database shim over node:sqlite — only prepare/bind/first/run/batch, the slice of the
-// D1 surface enrichSense actually calls (same in-memory-SQLite pattern as
-// migrations/cardBackMigration.test.ts, applied to a live write path instead of a static
-// migration file).
-class FakeStatement {
-  constructor(
-    private readonly stmt: StatementSync,
-    private readonly params: unknown[] = [],
-  ) {}
-
-  bind(...values: unknown[]): FakeStatement {
-    return new FakeStatement(this.stmt, values);
-  }
-
-  async first<T>(): Promise<T | null> {
-    const row = this.stmt.get(...(this.params as never[]));
-    return (row as T | undefined) ?? null;
-  }
-
-  async all<T>(): Promise<{ results: T[] }> {
-    return { results: this.stmt.all(...(this.params as never[])) as T[] };
-  }
-
-  async run(): Promise<{ meta: { changes: number } }> {
-    const info = this.stmt.run(...(this.params as never[]));
-    return { meta: { changes: Number(info.changes) } };
-  }
-}
-
-function fakeD1(db: DatabaseSync): D1Database {
-  return {
-    prepare: (sql: string) => new FakeStatement(db.prepare(sql)),
-    batch: async (statements: FakeStatement[]) => Promise.all(statements.map((s) => s.run())),
-  } as unknown as D1Database;
-}
-
-function openDb(): DatabaseSync {
-  const db = new DatabaseSync(":memory:");
-  db.exec(migration("0001_init.sql"));
-  db.exec(migration("0004_sense_examples.sql"));
-  db.exec("INSERT INTO languages (code, name) VALUES ('en', 'English')");
-  db.exec(
-    "INSERT INTO settings (id, desired_retention, daily_new_limit, daily_review_limit, production_gate_days) VALUES (1, 0.9, 15, 200, 21)",
-  );
-  return db;
-}
 
 function insertSense(db: DatabaseSync, id: string, lemma: string, sourceContext: string): void {
   db.prepare(
@@ -133,6 +80,12 @@ describe("enrichSense — refuses before any write (N1)", () => {
     const db = openDb();
     insertSense(db, "s-many", "wherewithal", "They lacked the wherewithal to finish.");
     insertCard(db, "s-many", "c-many-a");
+    // 0006's unique (sense_id, atom_type) index means this state can no longer arise through any
+    // current write path — its own migration comment says it "fails loudly if duplicates already
+    // exist" (i.e. it refuses to apply against data that already violates it). Dropping the index
+    // for this one test simulates the pre-0006 anomaly enrichSense's own count check defends
+    // against, so that defensive branch stays exercised even though the schema now also guards it.
+    db.exec("DROP INDEX idx_cards_sense_atom");
     insertCard(db, "s-many", "c-many-b");
 
     const outcome = await enrichSense(fakeD1(db), "s-many", {
