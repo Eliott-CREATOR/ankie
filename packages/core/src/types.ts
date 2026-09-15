@@ -68,3 +68,41 @@ export interface ReviewLogRow {
   typed_answer: string | null;
   device: string | null;
 }
+
+// C3 atom shapes (docs/prompts/c3.md "Shapes"). Recognition's front/back are unchanged
+// (MaterializedCard, materialize.ts) — these are the two new atom types only.
+export type FrequencyBand = "A" | "B" | "C" | "D";
+
+export interface ClozeProductionFront {
+  sentence_blanked: string;
+  hint_l1: string;
+  first_letter: string;
+}
+
+export interface ClozeProductionBack {
+  word: string;
+  answer: string;
+  accepted: string[];
+  sentence: string;
+  gloss_l1: string;
+  definition_l2: string | null;
+}
+
+export interface CollocationFront {
+  pattern: string;
+  word: string;
+}
+
+export interface CollocationBack {
+  word: string;
+  accepted: string[];
+  collocations: string[];
+}
+
+// GET /api/due's additive fields (docs/prompts/c3.md "Database / API implications") — an old
+// PWA build ignores fields it doesn't recognize.
+export type DueCard = CardRow & {
+  language_code: string;
+  tts_voice_hint: string | null;
+  frequency_band: FrequencyBand | null;
+};
