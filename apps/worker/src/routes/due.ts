@@ -1,91 +1,16 @@
+import type { DueCard } from "@ankie/core";
+import { startOfLocalDay } from "@ankie/core";
 import {
-  type DueCard,
-  type FrequencyBand,
-  type QueueCandidate,
-  selectQueue,
-  startOfLocalDay,
-} from "@ankie/core";
+  CANDIDATE_PAGE_SIZE,
+  type CandidateRow,
+  collectQueueCandidates,
+  toDueCard,
+} from "./dueCandidates.js";
 
 interface Settings {
   daily_new_limit: number;
   daily_review_limit: number;
   timezone: string;
-}
-
-const CARD_COLUMNS_QUALIFIED = `cards.id, cards.sense_id, cards.atom_type, cards.front, cards.back,
-  cards.state, cards.unlock_after_card, cards.unlock_min_stability, cards.due, cards.stability,
-  cards.difficulty, cards.elapsed_days, cards.scheduled_days, cards.reps, cards.lapses,
-  cards.last_review, cards.updated_at`;
-
-// Single-user deck: bounding these two reads avoids an unbounded scan as review history grows,
-// while staying comfortably above any plausible day's candidate pool — daily_review_limit
-// defaults to 200 and daily_new_limit to 15 — even after burying or confusable skips remove some
-// of what's fetched.
-const CANDIDATE_LIMIT = 1000;
-
-interface CandidateRow {
-  id: string;
-  sense_id: string;
-  atom_type: QueueCandidate["atom_type"];
-  front: string;
-  back: string;
-  state: DueCard["state"];
-  unlock_after_card: string | null;
-  unlock_min_stability: number | null;
-  due: number | null;
-  stability: number | null;
-  difficulty: number | null;
-  elapsed_days: number;
-  scheduled_days: number;
-  reps: number;
-  lapses: number;
-  last_review: number | null;
-  updated_at: number;
-  language_code: string;
-  tts_voice_hint: string | null;
-  frequency_band: FrequencyBand | null;
-  lemma_norm: string;
-  lexeme_created_at: number;
-  confusable_with: string | null;
-  conversation: number;
-}
-
-function toQueueCandidate(row: CandidateRow): QueueCandidate {
-  return {
-    id: row.id,
-    sense_id: row.sense_id,
-    atom_type: row.atom_type,
-    lemma_norm: row.lemma_norm,
-    confusable_with: row.confusable_with ? (JSON.parse(row.confusable_with) as string[]) : [],
-    conversation: row.conversation === 1,
-    frequency_band: row.frequency_band,
-    created_at: row.lexeme_created_at,
-  };
-}
-
-function toDueCard(row: CandidateRow): DueCard {
-  return {
-    id: row.id,
-    sense_id: row.sense_id,
-    atom_type: row.atom_type,
-    front: row.front,
-    back: row.back,
-    state: row.state,
-    unlock_after_card: row.unlock_after_card,
-    unlock_min_stability: row.unlock_min_stability,
-    due: row.due,
-    stability: row.stability,
-    difficulty: row.difficulty,
-    elapsed_days: row.elapsed_days,
-    scheduled_days: row.scheduled_days,
-    reps: row.reps,
-    lapses: row.lapses,
-    last_review: row.last_review,
-    updated_at: row.updated_at,
-    language_code: row.language_code,
-    tts_voice_hint: row.tts_voice_hint,
-    frequency_band: row.frequency_band,
-  };
 }
 
 interface ReviewedTodayRow {
@@ -101,11 +26,13 @@ interface IntroducedTodayRow {
 // pre-materialized JSON on the card row (apps/worker/scripts/seed.mjs), so no per-card sense/
 // lexeme join is needed to render — the joins below are for ordering and burying only.
 //
-// `now` defaults to the real clock; tests pass a fixed value to make local-day boundaries
-// deterministic (apps/worker/src/routes/due.test.ts).
+// `now` defaults to the real clock; `candidatePageSize` defaults to the production page size —
+// tests pass a fixed `now` for deterministic local-day boundaries and a small page size to prove
+// paging past the first page (apps/worker/src/routes/due.test.ts).
 export async function handleDue(
   env: { DB: D1Database },
   now: number = Date.now(),
+  candidatePageSize: number = CANDIDATE_PAGE_SIZE,
 ): Promise<Response> {
   const settings = await env.DB.prepare(
     "SELECT daily_new_limit, daily_review_limit, timezone FROM settings WHERE id = 1",
@@ -152,60 +79,23 @@ export async function handleDue(
   const newSlotsLeft = Math.max(0, settings.daily_new_limit - newIntroducedToday);
   const reviewSlotsLeft = Math.max(0, settings.daily_review_limit - reviewedToday);
 
-  const dueRows = await env.DB.prepare(
-    `SELECT ${CARD_COLUMNS_QUALIFIED}, lexemes.language_code AS language_code,
-       languages.tts_voice_hint AS tts_voice_hint, lexemes.frequency_band AS frequency_band,
-       lexemes.lemma_norm AS lemma_norm, lexemes.created_at AS lexeme_created_at,
-       senses.confusable_with AS confusable_with,
-       (senses.source_conversation IS NOT NULL) AS conversation
-     FROM cards
-     JOIN senses ON senses.id = cards.sense_id
-     JOIN lexemes ON lexemes.id = senses.lexeme_id
-     JOIN languages ON languages.code = lexemes.language_code
-     WHERE cards.state IN ('review', 'learning', 'relearning') AND cards.due <= ?1
-     ORDER BY cards.due ASC
-     LIMIT ?2`,
-  )
-    .bind(now, CANDIDATE_LIMIT)
-    .all<CandidateRow>();
-
-  // Frequency-band order is the spec's stated policy (docs/spec.md §7), but the seed data has no
-  // frequency_band values yet (C3's static frequency list) — ordering by it now would be an
-  // arbitrary NULL sort. Falling back to insertion order (lexemes.created_at) until that data
-  // exists is a real fallback, not a guess at what frequency-band ordering should look like.
-  // selectQueue does the actual conversation/graduating/band/created_at sort; this ORDER BY only
-  // keeps the fetch itself deterministic when a fixed limit truncates the pool.
-  const newRows = await env.DB.prepare(
-    `SELECT ${CARD_COLUMNS_QUALIFIED}, lexemes.language_code AS language_code,
-       languages.tts_voice_hint AS tts_voice_hint, lexemes.frequency_band AS frequency_band,
-       lexemes.lemma_norm AS lemma_norm, lexemes.created_at AS lexeme_created_at,
-       senses.confusable_with AS confusable_with,
-       (senses.source_conversation IS NOT NULL) AS conversation
-     FROM cards
-     JOIN senses ON senses.id = cards.sense_id
-     JOIN lexemes ON lexemes.id = senses.lexeme_id
-     JOIN languages ON languages.code = lexemes.language_code
-     WHERE cards.state = 'new'
-     ORDER BY lexemes.created_at ASC
-     LIMIT ?1`,
-  )
-    .bind(CANDIDATE_LIMIT)
-    .all<CandidateRow>();
-
-  const selectedIds = selectQueue({
-    dueCandidates: dueRows.results.map(toQueueCandidate),
-    newCandidates: newRows.results.map(toQueueCandidate),
-    reviewedTodaySenseIds: reviewedTodayRow.results.map((row) => row.sense_id),
-    introducedToday: introducedTodayRow.results.map((row) => ({
-      lemma_norm: row.lemma_norm,
-      confusable_with: row.confusable_with ? (JSON.parse(row.confusable_with) as string[]) : [],
-    })),
-    reviewSlots: reviewSlotsLeft,
-    newSlots: newSlotsLeft,
-  });
+  const { selectedIds, dueRows, newRows } = await collectQueueCandidates(
+    env,
+    now,
+    candidatePageSize,
+    {
+      reviewedTodaySenseIds: reviewedTodayRow.results.map((row) => row.sense_id),
+      introducedToday: introducedTodayRow.results.map((row) => ({
+        lemma_norm: row.lemma_norm,
+        confusable_with: row.confusable_with ? (JSON.parse(row.confusable_with) as string[]) : [],
+      })),
+      reviewSlots: reviewSlotsLeft,
+      newSlots: newSlotsLeft,
+    },
+  );
 
   const rowById = new Map<string, CandidateRow>(
-    [...dueRows.results, ...newRows.results].map((row) => [row.id, row]),
+    [...dueRows, ...newRows].map((row) => [row.id, row]),
   );
   const cards: DueCard[] = selectedIds.map((id) => {
     const row = rowById.get(id);
@@ -234,7 +124,7 @@ export async function handleDue(
     if (nextReviewRow?.next_due != null) {
       candidates.push(nextReviewRow.next_due);
     }
-    if (dueRows.results.length > 0 || newRows.results.length > 0) {
+    if (dueRows.length > 0 || newRows.length > 0) {
       candidates.push(todayStart + 24 * 60 * 60 * 1000);
     }
     nextDueAt = candidates.length > 0 ? Math.min(...candidates) : null;

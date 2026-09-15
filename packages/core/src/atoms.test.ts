@@ -79,6 +79,18 @@ describe("planAtoms", () => {
     expect(back.sentence).toBe("A classic conundrum for detectives.");
   });
 
+  it("a derivative that merely starts with the term does not count as a match (T-030 B4)", () => {
+    // "adoption" starts with "adopt" but is a different word, not a listed inflection of it —
+    // docs/prompts/c3.md "Cloze production" matching bullet.
+    const source: AtomSource = {
+      ...BASE,
+      term: "adopt",
+      context_sentence: "The adoption process took months.",
+    };
+    const atoms = planAtoms(source, { productionGateDays: 21 });
+    expect(atoms.map((a) => a.atom_type)).not.toContain("cloze_production");
+  });
+
   it("no match anywhere yields no cloze atom", () => {
     const source: AtomSource = {
       ...BASE,

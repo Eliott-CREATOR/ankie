@@ -6,12 +6,16 @@ function datePart(parts: Intl.DateTimeFormatPart[], type: Intl.DateTimeFormatPar
   return Number(part.value);
 }
 
-// Local midnight via Intl only (docs/prompts/c3.md decision 4 — daily reset moves to local
-// midnight instead of a fixed UTC offset). Reads `now`'s wall-clock date/time in `timeZone`,
-// works out that zone's current UTC offset by comparing those same numbers reinterpreted as UTC
-// against the real UTC instant, then shifts local midnight (built in UTC terms) by that offset
-// to get the correct real instant.
-export function startOfLocalDay(now: Date, timeZone: string): number {
+interface WallClock {
+  wallClockAsUtcMs: number;
+  year: number;
+  month: number;
+  day: number;
+}
+
+// `instant`'s wall-clock date/time in `timeZone`, reinterpreted as if it were itself a UTC
+// timestamp — comparing this against `instant` gives that zone's UTC offset *at that instant*.
+function wallClockAt(instant: number, timeZone: string): WallClock {
   const formatter = new Intl.DateTimeFormat("en-US", {
     timeZone,
     year: "numeric",
@@ -22,18 +26,45 @@ export function startOfLocalDay(now: Date, timeZone: string): number {
     second: "2-digit",
     hourCycle: "h23",
   });
-  const parts = formatter.formatToParts(now);
-
+  const parts = formatter.formatToParts(new Date(instant));
   const year = datePart(parts, "year");
   const month = datePart(parts, "month");
   const day = datePart(parts, "day");
   const hour = datePart(parts, "hour");
   const minute = datePart(parts, "minute");
   const second = datePart(parts, "second");
+  return {
+    wallClockAsUtcMs: Date.UTC(year, month - 1, day, hour, minute, second),
+    year,
+    month,
+    day,
+  };
+}
 
-  const wallClockAsUtc = Date.UTC(year, month - 1, day, hour, minute, second);
-  const offsetMs = wallClockAsUtc - now.getTime();
+function offsetMsAt(instant: number, timeZone: string): number {
+  return wallClockAt(instant, timeZone).wallClockAsUtcMs - instant;
+}
+
+// Local midnight via Intl only (docs/prompts/c3.md decision 4 — daily reset moves to local
+// midnight instead of a fixed UTC offset). `now`'s wall clock in `timeZone` identifies the
+// calendar date (unaffected by DST — Intl already accounts for it). Converting *that date's
+// midnight* to a real instant needs the offset valid *at midnight*, not at `now`: on a DST
+// transition date the two can differ, so the offset at `now` is only a first guess. Iterate —
+// apply the guessed offset, read the real offset at the resulting instant, repeat — until the
+// candidate stops moving; a timezone offset is piecewise constant, so this converges in at most
+// two steps (B2, T-030).
+export function startOfLocalDay(now: Date, timeZone: string): number {
+  const nowMs = now.getTime();
+  const { year, month, day } = wallClockAt(nowMs, timeZone);
   const utcMidnightOfSameDate = Date.UTC(year, month - 1, day, 0, 0, 0, 0);
 
-  return utcMidnightOfSameDate - offsetMs;
+  let candidate = utcMidnightOfSameDate - offsetMsAt(nowMs, timeZone);
+  for (let i = 0; i < 3; i++) {
+    const next = utcMidnightOfSameDate - offsetMsAt(candidate, timeZone);
+    if (next === candidate) {
+      break;
+    }
+    candidate = next;
+  }
+  return candidate;
 }
