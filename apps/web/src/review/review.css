@@ -1,0 +1,69 @@
+/* Functional C3 controls inherit the existing palette and type stack. */
+.production-area {
+  overflow-wrap: anywhere;
+}
+
+.answer-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  max-width: 320px;
+}
+
+.production-input {
+  width: 100%;
+  min-height: 44px;
+  border: 1px solid var(--fg-dim);
+  border-radius: 12px;
+  padding: 10px 14px;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  user-select: text;
+}
+
+.answer-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.review-action {
+  min-height: 44px;
+  min-width: 44px;
+  padding: 10px 16px;
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--accent);
+  font: inherit;
+}
+
+.answer-actions .review-action {
+  flex: 1;
+}
+
+.speak-button {
+  align-self: center;
+  margin: 12px;
+}
+
+.answer-result {
+  min-height: 1.5em;
+  margin: 0;
+}
+
+.frequency-label {
+  padding: 0 20px;
+  margin: 0;
+  font-size: 13px;
+  color: var(--fg-dim);
+  text-align: right;
+}
+
+.app :focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+/* No animation or transition is introduced, including in reduced-motion mode. */

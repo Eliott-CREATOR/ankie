@@ -6,6 +6,7 @@ export interface ReviewSubmission {
   rating: 1 | 2 | 3 | 4;
   reviewedAt: number;
   durationMs: number;
+  typedAnswer?: string;
 }
 
 export type SubmitReviewResult = { ok: true } | { ok: false; error: string };
@@ -18,7 +19,10 @@ export async function submitReview(submission: ReviewSubmission): Promise<Submit
     const res = await fetch("/api/review", {
       method: "POST",
       headers: { "content-type": "application/json", ...apiHeaders() },
-      body: JSON.stringify(submission),
+      body: JSON.stringify({
+        ...submission,
+        typedAnswer: submission.typedAnswer?.trim() || undefined,
+      }),
     });
     if (res.ok) {
       return { ok: true };
