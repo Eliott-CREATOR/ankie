@@ -29,6 +29,15 @@ function cardsForSense(
   }[];
 }
 
+function frequencyBandFor(db: DatabaseSync, lemmaNorm: string): string | null {
+  const row = db
+    .prepare("SELECT frequency_band FROM lexemes WHERE lemma_norm = ?")
+    .get(lemmaNorm) as {
+    frequency_band: string | null;
+  };
+  return row.frequency_band;
+}
+
 function senseIdFor(db: DatabaseSync, lemmaNorm: string): string {
   const row = db
     .prepare(
@@ -225,5 +234,27 @@ describe("ingestWords — plans and inserts atoms (T-018)", () => {
         needs_enrichment: ["conundrum", "quandary"],
       });
     }
+  });
+});
+
+// T-025: new words get a frequency band on ingest, from the same bundled JSON frequency.test.ts
+// exercises directly.
+describe("ingestWords — sets frequency_band on ingest (T-025)", () => {
+  it("sets the band for a word inside the bundled top 20,000", async () => {
+    const db = openDb();
+    await ingestWords(fakeD1(db), [word("wary", "Be wary.")], "api:ingest:json");
+
+    expect(frequencyBandFor(db, "wary")).toBe("D"); // rank 13639
+  });
+
+  it("leaves the band null for a word outside the bundled top 20,000", async () => {
+    const db = openDb();
+    await ingestWords(
+      fakeD1(db),
+      [word("conundrum", "It was a real conundrum.")],
+      "api:ingest:json",
+    );
+
+    expect(frequencyBandFor(db, "conundrum")).toBeNull();
   });
 });

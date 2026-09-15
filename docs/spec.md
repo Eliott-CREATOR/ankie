@@ -57,12 +57,17 @@ The earlier draft had spaCy, `wordfreq` and bge-m3 embeddings server-side. All r
 | lemma, POS, register, domain | Claude, in the conversation |
 | confusables | Claude, in the conversation |
 | definition, gloss, examples, collocations | Claude, in the conversation |
-| frequency band | static JSON asset bundled with the Worker (~20k words) |
+| frequency band | static JSON asset bundled with the Worker (`data/frequency/en-bands.json`, ~20k words, `wordfreq` 3.1.1, CC BY-SA 4.0 — `data/frequency/LICENSE.md`) |
 | dedup | normalised lemma string match |
 | IPA | deferred — hearing it beats reading it for a French speaker |
 | audio | `speechSynthesis` at review time |
 
 `transformers.js` stays on the shelf in case string dedup gets sloppy at scale. It probably won't.
+
+**Existing words — backfill.** Frequency band and the C3 cloze/collocation atoms only apply to
+words ingested after C3. `apps/worker/scripts/backfill-atoms.mjs` reads a read-only D1 export and
+writes a reviewable, idempotent `backfill-atoms.sql` for words ingested before C3 (docs/prompts/c3.md
+"Migration strategy for existing words") — local first, production only after Eliott approves it.
 
 ---
 

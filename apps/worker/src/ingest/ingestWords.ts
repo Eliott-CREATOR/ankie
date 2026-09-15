@@ -1,4 +1,5 @@
 import { initialAtomState, materializeCard, normalizeLemma, planAtoms } from "@ankie/core";
+import { frequencyBandOf } from "./frequency.js";
 import type { WordInput } from "./payload.js";
 
 export interface IngestResult {
@@ -135,10 +136,10 @@ export async function ingestWords(
       db
         .prepare(
           `INSERT INTO lexemes (id, language_code, lemma, lemma_norm, pos, ipa, frequency_band, created_at)
-           SELECT ?1, ?2, ?3, ?4, NULL, NULL, NULL, ?5
+           SELECT ?1, ?2, ?3, ?4, NULL, NULL, ?5, ?6
            WHERE NOT EXISTS (SELECT 1 FROM lexemes WHERE language_code = ?2 AND lemma_norm = ?4)`,
         )
-        .bind(lexemeId, language, word.term, lemmaNorm, now),
+        .bind(lexemeId, language, word.term, lemmaNorm, frequencyBandOf(lemmaNorm), now),
       db
         .prepare(
           `INSERT INTO senses (id, lexeme_id, sense_index, gloss_l1, definition_l2, register, domain,
