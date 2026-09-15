@@ -476,6 +476,23 @@ Never expose an unauthenticated MCP endpoint — anyone who found the URL could 
 
 **A Skill on the English project** encodes the card style guide, so every vocabulary session emits the same shape without being told.
 
+**Known limitation — pre-C3 PWA builds and newly-unlocked atom shapes (accepted risk, T-030 B1).**
+C3 added cloze-production and collocation atoms, whose front/back JSON shapes differ from
+recognition's (§6, "Shapes"). A PWA build from before C3 only knows the recognition shape; if it
+received an unlocked cloze/collocation card, it would parse the JSON as recognition and crash on
+reveal (`context_sentence` isn't a key either shape has). Accepted rather than fixed now because
+the exposure window is small and closes on its own: the app shell is same-origin with no service
+worker (`CLAUDE.md` "Deployment architecture"), so a browser reload always fetches whatever build
+is currently deployed — there's no mechanism by which a stale pre-C3 build could persist across a
+reload. The remaining risk is a tab left open, unreloaded, from before the C3 deploy until a card
+actually unlocks — the earliest that can happen is `production_gate_days`/`COLLOCATION_GATE_DAYS`
+after that card's recognition side is first reviewed, i.e. **at least 7 days** after migration
+(`COLLOCATION_GATE_DAYS`, `packages/core/src/atoms.ts`) — a single-user tool, that's judged
+unlikely enough not to block C3 on. **This stops being true once C4 adds offline/service-worker
+caching** (§8): a cached client can then persist indefinitely with no reload forcing a refresh, so
+C4 must add client–API version negotiation (the client declaring what atom shapes it understands,
+the server withholding or downgrading what it can't render) before any client build gets cached.
+
 ---
 
 ## 6. Card design

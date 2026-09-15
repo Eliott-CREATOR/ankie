@@ -260,6 +260,82 @@ describe("GET /api/due — nextDueAt (T-022)", () => {
   });
 });
 
+describe("GET /api/due — candidate paging (T-030 B3)", () => {
+  it("serves a due card past the first candidate page when the page's cards are buried", async () => {
+    const db = openDb();
+
+    insertLexeme(db, "lex-1", "conundrum");
+    insertSense(db, "s-1", "lex-1");
+    insertCard(db, "card-1-reviewed", "s-1", {
+      atomType: "recognition",
+      state: "review",
+      due: NOW + 100000,
+    });
+    insertCard(db, "card-1-due", "s-1", {
+      atomType: "cloze_production",
+      state: "review",
+      due: NOW - 3000,
+    });
+    insertReviewLog(db, "log-1", "card-1-reviewed", TODAY_START + 1000);
+
+    insertLexeme(db, "lex-2", "aardvark");
+    insertSense(db, "s-2", "lex-2");
+    insertCard(db, "card-2-reviewed", "s-2", {
+      atomType: "recognition",
+      state: "review",
+      due: NOW + 100000,
+    });
+    insertCard(db, "card-2-due", "s-2", {
+      atomType: "cloze_production",
+      state: "review",
+      due: NOW - 2000,
+    });
+    insertReviewLog(db, "log-2", "card-2-reviewed", TODAY_START + 1000);
+
+    insertLexeme(db, "lex-3", "wherewithal");
+    insertSense(db, "s-3", "lex-3");
+    insertCard(db, "card-3-due", "s-3", {
+      atomType: "recognition",
+      state: "review",
+      due: NOW - 1000,
+    });
+
+    const response = await handleDue({ DB: fakeD1(db) }, NOW, 2);
+    const body = (await response.json()) as { cards: { id: string }[] };
+    expect(body.cards.map((c) => c.id)).toEqual(["card-3-due"]);
+  });
+
+  it("serves a new card past the first candidate page when the page's cards are confusable-blocked", async () => {
+    const db = openDb();
+
+    insertLexeme(db, "lex-source", "source", { createdAt: 0 });
+    insertSense(db, "s-source", "lex-source", { confusableWith: ["blocked1", "blocked2"] });
+    insertCard(db, "card-source", "s-source", {
+      atomType: "recognition",
+      state: "review",
+      due: NOW + 100000,
+      reps: 1,
+    });
+    insertReviewLog(db, "log-source", "card-source", TODAY_START + 1000);
+
+    insertLexeme(db, "lex-blocked1", "blocked1", { createdAt: 1 });
+    insertSense(db, "s-blocked1", "lex-blocked1");
+    insertCard(db, "card-blocked1", "s-blocked1", { state: "new" });
+
+    insertLexeme(db, "lex-blocked2", "blocked2", { createdAt: 2 });
+    insertSense(db, "s-blocked2", "lex-blocked2");
+    insertCard(db, "card-blocked2", "s-blocked2", { state: "new" });
+
+    insertLexeme(db, "lex-wanted", "wanted", { createdAt: 3 });
+    insertSense(db, "s-wanted", "lex-wanted");
+    insertCard(db, "card-wanted", "s-wanted", { state: "new" });
+
+    const response = await handleDue({ DB: fakeD1(db) }, NOW, 2);
+    const body = (await response.json()) as { cards: { id: string }[] };
+    expect(body.cards.map((c) => c.id)).toEqual(["card-wanted"]);
+  });
+});
+
 describe("ankie_get_due_summary — locked (T-022)", () => {
   it("counts locked cards separately from due/new/pending_enrichment", async () => {
     const db = openDb();
